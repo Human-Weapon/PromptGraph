@@ -1,24 +1,23 @@
 """ContextPackage — assemble the final context package delivered to an agent.
 
-PG-01 fix: Token budget is enforced.  ``build()`` validates the final
-rendered token count against the configured budget and sets
-``budget_exceeded`` on the package.  The caller can inspect
-``excluded_nodes`` to see what was dropped.
-
-PG-02 fix: Contradictions are propagated to the package.  The package
-status (READY / NEEDS_CLARIFICATION / BLOCKED) reflects whether
-unresolved strong contradictions exist.
+PG-01 (round 2): Strict hard budget.
+  - ONE authoritative token count of the FINAL rendered prompt.
+  - Successful packages MUST satisfy total_tokens <= token_budget.
+  - If mandatory content cannot fit: raise BudgetExceededError.
+  - Never return READY above budget.
 """
 
 from __future__ import annotations
 
 from .contradiction_detection import Contradiction
+from .exceptions import BudgetExceededError, TokenBudgetError
 from .models import (
     ContextNode,
     ContextPackage,
     Decision,
     PackageStatus,
     Requirement,
+    estimate_token_count,
 )
 
 
@@ -26,16 +25,28 @@ class ContextPackageBuilder:
     """Build a ContextPackage from components and render it as a prompt."""
 
     def __init__(self, token_budget: int = 8000) -> None:
+        if token_budget < 0:
+            raise TokenBudgetError("token_budget must be non-negative.")
         self.token_budget = token_budget
 
-    def render_summary(self, package: ContextPackage) -> str:
-        """Render the package header + requirements + context + decisions."""
+    def render_summary(
+        self,
+        package: ContextPackage,
+        *,
+        include_budget_warning: bool = False,
+    ) -> str:
+        """Render the package header + requirements + context + decisions.
+
+        By default does NOT include the budget-exceeded footer (that would
+        change the token count after the fact).  Warnings are raised as
+        exceptions instead of being embedded after counting.
+        """
         lines: list[str] = []
         lines.append(f"# {package.title}")
         lines.append("")
 
         if package.contradictions:
-            lines.append("## ⚠ Contradictions Detected")
+            lines.append("## Contradictions Detected")
             for c in package.contradictions:
                 lines.append(
                     f"- [{c.confidence}] {c.reason}"
@@ -66,16 +77,26 @@ class ContextPackageBuilder:
                 lines.append(f"- **{d.title}**: {d.decision}")
             lines.append("")
 
-        if package.budget_exceeded:
-            lines.append("## ⚠ Budget Exceeded")
-            lines.append(
-                f"Rendered content ({package.total_tokens} tokens) exceeds "
-                f"the configured budget ({package.token_budget} tokens). "
-                f"{len(package.excluded_nodes)} node(s) were excluded."
-            )
-            lines.append("")
-
         return "\n".join(lines).strip()
+
+    def _render_mandatory_only(
+        self,
+        title: str,
+        requirements: list[Requirement],
+        decisions: list[Decision],
+        contradictions: list[Contradiction],
+    ) -> str:
+        """Render only mandatory structure (no optional context nodes)."""
+        stub = ContextPackage(
+            title=title,
+            prompt="",
+            requirements=list(requirements),
+            decisions=list(decisions),
+            contradictions=list(contradictions),
+            context_nodes=[],
+            token_budget=self.token_budget,
+        )
+        return self.render_summary(stub)
 
     def build(
         self,
@@ -87,44 +108,75 @@ class ContextPackageBuilder:
         system_prompt: str = "You are a precise software engineering agent.",
         excluded_nodes: list[ContextNode] | None = None,
     ) -> ContextPackage:
-        """Build a ContextPackage with token enforcement and contradiction propagation.
+        """Build a ContextPackage with STRICT token enforcement.
 
-        PG-01: The rendered prompt is token-counted once (no double counting).
-        If it exceeds ``self.token_budget``, ``budget_exceeded`` is set.
-        PG-02: Contradictions are attached to the package and influence status.
+        Mandatory content = title + requirements + decisions + contradictions
+        + structural headings.  Optional = context_nodes.
+
+        If mandatory alone exceeds ``token_budget``: ``BudgetExceededError``.
+        Optional nodes are greedily kept only while the FINAL rendered prompt
+        stays within budget (dropping largest first if needed).
         """
+        # system_prompt is accepted and stored in metadata for callers that
+        # inject it outside the rendered package body (PG-13).
         nodes = list(context_nodes or [])
         contras = list(contradictions or [])
+        decs = list(decisions or [])
         excluded = list(excluded_nodes or [])
 
-        # Determine package status from contradictions.
-        strong_conflicts = [c for c in contras if c.confidence == "strong"]
-        if strong_conflicts:
-            status = PackageStatus.BLOCKED
-        elif contras:
-            status = PackageStatus.NEEDS_CLARIFICATION
-        else:
-            status = PackageStatus.READY
+        # 1. Check mandatory content alone fits.
+        mandatory_text = self._render_mandatory_only(title, list(requirements), decs, contras)
+        mandatory_tokens = estimate_token_count(mandatory_text)
+        if self.token_budget >= 0 and mandatory_tokens > self.token_budget:
+            raise BudgetExceededError(
+                f"Mandatory package content requires {mandatory_tokens} tokens, "
+                f"which exceeds the hard budget of {self.token_budget}."
+            )
 
-        package = ContextPackage(
-            title=title,
-            prompt=system_prompt,
-            context_nodes=nodes,
-            requirements=list(requirements),
-            decisions=list(decisions or []),
-            contradictions=contras,
-            status=status,
-            token_budget=self.token_budget,
-            excluded_nodes=excluded,
-        )
-        # Render once, then compute tokens from the rendered text.
-        package.prompt = self.render_summary(package)
-        package.compute_tokens()
+        # 2. Fit optional context nodes under remaining budget by iterative drop.
+        #    Drop largest nodes first until final render fits.
+        kept = list(nodes)
+        while True:
+            strong = [c for c in contras if c.confidence == "strong"]
+            status = (
+                PackageStatus.BLOCKED
+                if strong
+                else (PackageStatus.NEEDS_CLARIFICATION if contras else PackageStatus.READY)
+            )
+            package = ContextPackage(
+                title=title,
+                prompt="",
+                context_nodes=kept,
+                requirements=list(requirements),
+                decisions=decs,
+                contradictions=contras,
+                status=status,
+                token_budget=self.token_budget,
+                excluded_nodes=excluded + [n for n in nodes if n not in kept],
+                metadata={"system_prompt": system_prompt},
+            )
+            package.prompt = self.render_summary(package)
+            package.compute_tokens()
 
-        # PG-01: Check if the final rendered package exceeds the budget.
-        package.budget_exceeded = self.token_budget > 0 and package.total_tokens > self.token_budget
+            if package.total_tokens <= self.token_budget:
+                package.budget_exceeded = False
+                # Strong contradictions block usability even if under budget.
+                if strong:
+                    package.status = PackageStatus.BLOCKED
+                return package
 
-        return package
+            if not kept:
+                # Nothing left to drop but still over — should not happen if
+                # mandatory check passed, but guard anyway.
+                raise BudgetExceededError(
+                    f"Rendered package requires {package.total_tokens} tokens, "
+                    f"exceeding hard budget {self.token_budget}."
+                )
+
+            # Drop the largest remaining optional node.
+            kept.sort(key=lambda n: n.estimate_tokens(), reverse=True)
+            dropped = kept.pop(0)
+            excluded = list(excluded) + [dropped]
 
     def to_markdown(self, package: ContextPackage) -> str:
         """Return a standalone markdown document for the package."""

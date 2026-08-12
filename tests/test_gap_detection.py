@@ -38,12 +38,16 @@ def test_no_false_contradiction():
 
 def test_contradiction_to_dict():
     detector = ContradictionDetector()
-    f = detector.detect([_req("deny all access.", "R1"), _req("enable anonymous login.", "R2")])
+    f = detector.detect(
+        [
+            _req("The admin panel must deny anonymous access.", "R1"),
+            _req("The admin panel must enable anonymous login.", "R2"),
+        ]
+    )
     assert f, "Expected a contradiction between 'enable' and 'deny'"
     d = f[0].to_dict()
     assert "requirement_a" in d
-    assert d["requirement_a"] == "R1"
-    assert d["requirement_b"] == "R2"
+    assert {d["requirement_a"], d["requirement_b"]} == {"R1", "R2"}
 
 
 def test_missing_detection_no_requirements():

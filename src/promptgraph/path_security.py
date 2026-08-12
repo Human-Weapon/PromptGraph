@@ -1,8 +1,7 @@
 """Path containment validation (PG-04).
 
-Ensures that paths used by persistent writers (DecisionLedger,
-TechnicalMemory) do not escape their intended base directory through
-symlinks, Windows junctions, or resolved parent paths.
+Ensures that paths used by persistent writers do not escape their intended
+base directory through symlinks, Windows junctions, or reparse points.
 """
 
 from __future__ import annotations
@@ -14,15 +13,8 @@ from .exceptions import PathEscapeError
 
 
 def resolve_canonical(path: str | Path) -> Path:
-    """Resolve a path to its canonical form, following symlinks/junctions.
-
-    On Windows this resolves junctions and reparse points.  On POSIX
-    this follows symlinks.  ``strict=False`` is used so the path does
-    not need to exist yet.
-    """
+    """Resolve a path to its canonical form, following symlinks/junctions."""
     p = Path(path)
-    # os.path.realpath resolves symlinks, junctions, and reparse points
-    # on both Windows and POSIX.
     resolved = os.path.realpath(str(p))
     return Path(resolved)
 
@@ -40,8 +32,15 @@ def validate_contained(
     base_canonical = resolve_canonical(base)
     target_canonical = resolve_canonical(target)
 
+    # On Windows, normalise case for comparison
+    base_cmp = str(base_canonical)
+    tgt_cmp = str(target_canonical)
+    if os.name == "nt":
+        base_cmp = os.path.normcase(base_cmp)
+        tgt_cmp = os.path.normcase(tgt_cmp)
+
     try:
-        target_canonical.relative_to(base_canonical)
+        Path(tgt_cmp).relative_to(Path(base_cmp))
     except ValueError as exc:
         raise PathEscapeError(
             f"Path '{target}' resolves to '{target_canonical}' which is "
@@ -52,11 +51,7 @@ def validate_contained(
 
 
 def safe_join(base: str | Path, *parts: str) -> Path:
-    """Join ``parts`` onto ``base`` and validate the result is contained.
-
-    Raises ``PathEscapeError`` if any component escapes via ``..`` or
-    symlink resolution.
-    """
+    """Join ``parts`` onto ``base`` and validate the result is contained."""
     base_path = Path(base)
     joined = base_path.joinpath(*parts)
     return validate_contained(joined, base_path)

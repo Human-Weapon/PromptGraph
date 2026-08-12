@@ -1,16 +1,7 @@
 """PromptGraph core — orchestrates the full context-preparation pipeline.
 
-Pipeline:
-    User's messy explanation
-      → RequirementExtractor → structured requirements
-      → ContradictionDetector + MissingRequirementDetector → gaps
-      → QuestionBudgeter → only the necessary questions
-      → DecisionLedger / TechnicalMemory → prior decisions consulted
-      → ContextSelector → relevant context nodes
-      → ContextPackageBuilder → final prompt/context package
-
-PG-02 fix: Contradictions are propagated to the final package.
-PG-08 fix: ``budget=0`` means zero; ``None`` means use default.
+PG-04: trusted_root wires path containment into default persistence.
+PG-01/02/08: budget and contradiction propagation.
 """
 
 from __future__ import annotations
@@ -25,7 +16,7 @@ from .context_selection import ContextSelector
 from .contradiction_detection import Contradiction, ContradictionDetector
 from .decision_ledger import DecisionLedger
 from .missing_requirement_detection import MissingRequirement, MissingRequirementDetector
-from .models import ContextNode, Decision, Requirement  # noqa: F401 (re-export)
+from .models import ContextNode, Decision, Requirement  # noqa: F401
 from .question_budget import QuestionBudgeter, QuestionSet
 from .requirement_extraction import RequirementExtractor
 from .technical_memory import TechnicalMemory
@@ -41,47 +32,48 @@ class PromptGraph:
         decisions_path: str | Path = ".agentops/decisions/decisions.json",
         token_budget: int = 8000,
         max_questions: int = 8,
+        trusted_root: str | Path | None = None,
     ) -> None:
+        # Default trusted root = cwd when using default .agentops paths
+        if trusted_root is None and (
+            str(memory_path).startswith(".agentops") or str(decisions_path).startswith(".agentops")
+        ):
+            trusted_root = Path.cwd()
+
+        self.trusted_root = Path(trusted_root) if trusted_root is not None else None
         self.extractor = RequirementExtractor()
         self.contradiction_detector = ContradictionDetector()
         self.missing_detector = MissingRequirementDetector()
         self.question_budgeter = QuestionBudgeter(max_questions=max_questions)
         self.token_budget = token_budget
         self.graph = ContextGraph()
-        self.memory = TechnicalMemory(memory_path)
-        self.ledger = DecisionLedger(decisions_path)
+        self.memory = TechnicalMemory(memory_path, trusted_root=self.trusted_root)
+        self.ledger = DecisionLedger(decisions_path, trusted_root=self.trusted_root)
         self.memory.with_decision_ledger(self.ledger)
         self.selector = ContextSelector(self.graph)
         self.builder = ContextPackageBuilder(token_budget=token_budget)
         self._integrations: dict[str, object] = {}
 
-    # --- Detection of optional integrations ---------------------------------
     def detect_integrations(self) -> dict[str, bool]:
-        """Return which ecosystem siblings are installed."""
         return {
             name: _sibling_utils.is_installed(name)
             for name in ("agentgear", "agentbench", "projectkaizen", "skillguard")
         }
 
-    # --- Phase 1: turn messy explanation into requirements -------------------
     def extract_requirements(self, explanation: str) -> list[Requirement]:
-        """Extract structured requirements from a messy explanation."""
         return self.extractor.extract(explanation)
 
-    # --- Phase 2: detect gaps -------------------------------------------------
     def detect_contradictions(self, requirements: Iterable[Requirement]) -> list[Contradiction]:
         return self.contradiction_detector.detect(requirements)
 
     def detect_missing(self, requirements: Iterable[Requirement]) -> list[MissingRequirement]:
         return self.missing_detector.detect(requirements)
 
-    # --- Phase 3: decide what questions to ask -------------------------------
     def budget_questions(
         self, requirements: Iterable[Requirement], answered: set[str] | None = None
     ) -> QuestionSet:
         return self.question_budgeter.budget(requirements, answered_ids=answered)
 
-    # --- Phase 4: prior decisions / technical memory -------------------------
     def record_decision(self, decision: Decision) -> str:
         return self.ledger.record(decision)
 
@@ -91,7 +83,6 @@ class PromptGraph:
     def recall(self, query: str, limit: int = 20) -> list[dict[str, object]]:
         return self.memory.search(query, limit=limit)
 
-    # --- Phase 5: build context graph & select context ------------------------
     def add_context_node(self, node: ContextNode) -> None:
         self.graph.add_node(node)
 
@@ -105,7 +96,6 @@ class PromptGraph:
         *,
         include_dependencies_of: Iterable[str] = (),
     ) -> BudgetResult:
-        # PG-08: explicit None check instead of falsy `or`.
         effective_budget = self.token_budget if budget is None else budget
         return self.selector.select(
             query,
@@ -113,7 +103,6 @@ class PromptGraph:
             include_dependencies_of=include_dependencies_of,
         )
 
-    # --- Phase 6: assemble final context package -----------------------------
     def build_package(
         self,
         title: str,
@@ -122,6 +111,7 @@ class PromptGraph:
         decisions: list[Decision] | None = None,
         contradictions: list[Contradiction] | None = None,
         excluded_nodes: list[ContextNode] | None = None,
+        system_prompt: str = "You are a precise software engineering agent.",
     ) -> ContextPackage:
         return self.builder.build(
             title,
@@ -130,9 +120,9 @@ class PromptGraph:
             decisions,
             contradictions=contradictions,
             excluded_nodes=excluded_nodes,
+            system_prompt=system_prompt,
         )
 
-    # --- Full pipeline convenience -------------------------------------------
     def prepare(
         self,
         explanation: str,
@@ -140,17 +130,14 @@ class PromptGraph:
         *,
         budget: int | None = None,
         include_prior_decisions: bool = True,
+        system_prompt: str = "You are a precise software engineering agent.",
     ) -> dict[str, object]:
-        """Run the full pipeline and return a structured result dict."""
         requirements = self.extract_requirements(explanation)
         contradictions = self.detect_contradictions(requirements)
         missing = self.detect_missing(requirements)
         questions = self.budget_questions(requirements)
 
-        # Build a context query from the requirement descriptions.
         query = " ".join(r.description for r in requirements)
-
-        # PG-08: explicit None check.
         effective_budget = self.token_budget if budget is None else budget
         selection = self.selector.select(query, effective_budget)
 
@@ -164,7 +151,6 @@ class PromptGraph:
                     decisions.append(d)
             decisions = decisions[:5]
 
-        # PG-02: propagate contradictions to the package.
         package = self.builder.build(
             title,
             requirements,
@@ -172,6 +158,7 @@ class PromptGraph:
             decisions,
             contradictions=contradictions,
             excluded_nodes=selection.excluded,
+            system_prompt=system_prompt,
         )
 
         return {

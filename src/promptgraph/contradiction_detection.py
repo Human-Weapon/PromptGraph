@@ -1,65 +1,69 @@
 """Contradiction detection between structured requirements.
 
-PG-07 fix: Findings now carry a ``confidence`` field ('strong' or
-'heuristic').  Weak lexical matches that may be false positives are
-marked ``confidence='heuristic'`` and ``severity='info'``.  Strong
-direct antonyms remain ``confidence='strong'``.
+PG-07: confidence levels; intra-requirement detection; phrase variants
+  (authenticate/authentication/authenticated). Do NOT hardcode
+  "public + authentication" as a contradiction.
 
-Same-requirement detection: if two requirements share significant token
-overlap, they are more likely to be about the same subject and thus a
-contradiction is more credible.  Disjoint requirements with weak signal
-are downgraded.
-
-PG-11 fix: Candidate filtering — requirements that contain NO pattern
-keyword at all are excluded from pairwise comparison, reducing the
-quadratic constant factor significantly.
+PG-11: polarity-group candidate filtering + max_pair_checks bound.
+  When limited: analysis_truncated=True on result metadata via detector flag.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .models import Requirement
 
-# Pairs of terms that typically signal contradiction.
-# Each pair: (pattern_a, pattern_b, default_confidence)
-_CONTRADICTION_PAIRS: list[tuple[re.Pattern[str], re.Pattern[str], str]] = [
+# Polarity groups: only compare opposing groups.
+# Each entry: (polarity_name, pattern)
+_POLARITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("allow", re.compile(r"\b(allow|permit|enabled?)\b", re.I)),
+    ("deny", re.compile(r"\b(deny|forbid|disabled|never allow|prohibit)\b", re.I)),
+    ("public", re.compile(r"\b(public|open to all|no auth)\b", re.I)),
+    ("private", re.compile(r"\b(private)\b", re.I)),
+    # NOTE: authentication alone is NOT the opposite of public (PG-07).
+    ("readonly", re.compile(r"\b(read-only|read only)\b", re.I)),
+    ("writable", re.compile(r"\b(writable|write to|write access|read-write)\b", re.I)),
+    ("sync", re.compile(r"\b(synchronous|blocking)\b", re.I)),
+    ("async", re.compile(r"\b(asynchronous|non-blocking)\b", re.I)),
+    ("delete", re.compile(r"\b(delete|remove|drop)\b", re.I)),
+    ("preserve", re.compile(r"\b(preserve|keep|retain)\b", re.I)),
+    ("increase", re.compile(r"\b(increase|add|expand)\b", re.I)),
+    ("decrease", re.compile(r"\b(decrease|reduce|shrink)\b", re.I)),
+]
+
+# Opposing polarity pairs and default confidence
+_OPPOSING: list[tuple[str, str, str]] = [
+    ("allow", "deny", "heuristic"),
+    ("public", "private", "strong"),  # public vs private (NOT public vs auth)
+    ("readonly", "writable", "strong"),
+    ("sync", "async", "strong"),
+    ("delete", "preserve", "heuristic"),
+    ("increase", "decrease", "heuristic"),
+]
+
+# Intra-requirement opposing phrases (same sentence)
+_INTRA_PAIRS: list[tuple[re.Pattern[str], re.Pattern[str], str]] = [
+    (
+        re.compile(r"\b(public)\b", re.I),
+        re.compile(r"\b(private)\b", re.I),
+        "strong",
+    ),
     (
         re.compile(r"\b(read-only|read only)\b", re.I),
-        re.compile(r"\b(writable|write to|write access|read-write)\b", re.I),
+        re.compile(r"\b(writable|write access)\b", re.I),
         "strong",
     ),
     (
-        re.compile(r"\b(public|open to all|no auth)\b", re.I),
-        re.compile(r"\b(private|auth required|must authenticate)\b", re.I),
-        "strong",
-    ),
-    (
-        re.compile(r"\b(synchronous|blocking)\b", re.I),
-        re.compile(r"\b(asynchronous|non-blocking)\b", re.I),
-        "strong",
-    ),
-    (
-        re.compile(r"\b(allow|permit|enabled?)\b", re.I),
-        re.compile(r"\b(deny|forbid|disabled|never allow)\b", re.I),
-        "heuristic",
-    ),
-    (
-        re.compile(r"\b(delete|remove|drop)\b", re.I),
-        re.compile(r"\b(preserve|keep|retain)\b", re.I),
-        "heuristic",
-    ),
-    (
-        re.compile(r"\b(increase|add|expand)\b", re.I),
-        re.compile(r"\b(decrease|reduce|shrink)\b", re.I),
+        re.compile(r"\b(allow|permit)\b", re.I),
+        re.compile(r"\b(deny|forbid)\b", re.I),
         "heuristic",
     ),
 ]
 
-# Requirements above this size are checked; larger sets use candidate filtering.
-_LARGE_SET_THRESHOLD = 200
+DEFAULT_MAX_PAIR_CHECKS = 50_000
 
 
 def _tokenize(text: str) -> set[str]:
@@ -67,9 +71,7 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _content_overlap(a: str, b: str) -> float:
-    """Jaccard similarity of token sets (0.0 to 1.0)."""
-    ta = _tokenize(a)
-    tb = _tokenize(b)
+    ta, tb = _tokenize(a), _tokenize(b)
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / len(ta | tb)
@@ -77,7 +79,7 @@ def _content_overlap(a: str, b: str) -> float:
 
 @dataclass
 class Contradiction:
-    """A detected contradiction between two requirements."""
+    """A detected contradiction between requirements (or within one)."""
 
     requirement_a: str
     requirement_b: str
@@ -85,7 +87,7 @@ class Contradiction:
     snippet_b: str
     reason: str = ""
     severity: str = "warning"
-    confidence: str = "heuristic"
+    confidence: str = "heuristic"  # strong | heuristic
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -99,82 +101,113 @@ class Contradiction:
         }
 
 
-class ContradictionDetector:
-    """Detects pairwise contradictions among a set of requirements."""
+@dataclass
+class DetectionResult:
+    """Result of contradiction detection with truncation signal."""
 
-    def __init__(self, overlap_threshold: float = 0.15) -> None:
-        self.patterns = _CONTRADICTION_PAIRS
+    findings: list[Contradiction] = field(default_factory=list)
+    analysis_truncated: bool = False
+    pair_checks: int = 0
+
+
+class ContradictionDetector:
+    """Detects contradictions with polarity grouping and bounded work."""
+
+    def __init__(
+        self,
+        overlap_threshold: float = 0.15,
+        max_pair_checks: int = DEFAULT_MAX_PAIR_CHECKS,
+    ) -> None:
         self.overlap_threshold = overlap_threshold
+        self.max_pair_checks = max_pair_checks
+        self.last_result: DetectionResult | None = None
 
     def detect(self, requirements: Iterable[Requirement]) -> list[Contradiction]:
+        result = self.detect_with_meta(requirements)
+        self.last_result = result
+        return result.findings
+
+    def detect_with_meta(self, requirements: Iterable[Requirement]) -> DetectionResult:
         reqs = list(requirements)
-
-        # PG-11: Candidate filtering — only compare requirements that contain
-        # at least one pattern keyword. This reduces the constant factor of
-        # the O(n²) comparison dramatically for large sets.
-        candidates: list[tuple[int, Requirement, list[int]]] = []
-        for idx, req in enumerate(reqs):
-            matched_pairs: list[int] = []
-            for pi, (pa, pb, _) in enumerate(self.patterns):
-                if pa.search(req.description) or pb.search(req.description):
-                    matched_pairs.append(pi)
-            if matched_pairs:
-                candidates.append((idx, req, matched_pairs))
-
         findings: list[Contradiction] = []
-        for ii in range(len(candidates)):
-            for jj in range(ii + 1, len(candidates)):
-                idx_a, a, pairs_a = candidates[ii]
-                idx_b, b, pairs_b = candidates[jj]
-                common_pairs = set(pairs_a) & set(pairs_b)
-                if not common_pairs:
-                    continue
-                overlap = _content_overlap(a.description, b.description)
-                for pi in common_pairs:
-                    pat_a, pat_b, default_conf = self.patterns[pi]
-                    match_a = pat_a.search(a.description)
-                    match_b = pat_b.search(b.description)
-                    if match_a and match_b:
-                        # Determine confidence: downgrade to heuristic if
-                        # requirements have low content overlap (likely
-                        # about different subjects).
-                        confidence = default_conf
-                        if default_conf == "strong" and overlap < self.overlap_threshold:
-                            confidence = "heuristic"
-                        findings.append(
-                            Contradiction(
-                                requirement_a=a.id,
-                                requirement_b=b.id,
-                                snippet_a=match_a.group(0),
-                                snippet_b=match_b.group(0),
-                                reason=(
-                                    f"'{match_a.group(0)}' in {a.id} conflicts with "
-                                    f"'{match_b.group(0)}' in {b.id}"
-                                ),
-                                severity="warning" if confidence == "strong" else "info",
-                                confidence=confidence,
-                            )
+        pair_checks = 0
+        truncated = False
+
+        # Intra-requirement checks (linear)
+        for req in reqs:
+            for pa, pb, conf in _INTRA_PAIRS:
+                ma, mb = pa.search(req.description), pb.search(req.description)
+                if ma and mb:
+                    findings.append(
+                        Contradiction(
+                            requirement_a=req.id,
+                            requirement_b=req.id,
+                            snippet_a=ma.group(0),
+                            snippet_b=mb.group(0),
+                            reason=(
+                                f"Intra-requirement conflict in {req.id}: "
+                                f"'{ma.group(0)}' vs '{mb.group(0)}'"
+                            ),
+                            severity="warning" if conf == "strong" else "info",
+                            confidence=conf,
                         )
+                    )
+
+        # Assign polarities
+        polarity_map: dict[str, list[tuple[int, Requirement, re.Match[str]]]] = {}
+        for idx, req in enumerate(reqs):
+            for pname, pat in _POLARITY_PATTERNS:
+                m = pat.search(req.description)
+                if m:
+                    polarity_map.setdefault(pname, []).append((idx, req, m))
+
+        # Compare only opposing groups
+        seen_pairs: set[tuple[str, str, str, str]] = set()
+        for pol_a, pol_b, default_conf in _OPPOSING:
+            group_a = polarity_map.get(pol_a, [])
+            group_b = polarity_map.get(pol_b, [])
+            if not group_a or not group_b:
+                continue
+            for _ia, ra, ma in group_a:
+                for _ib, rb, mb in group_b:
+                    if ra.id == rb.id:
                         continue
-                    # Reverse direction
-                    match_a2 = pat_b.search(a.description)
-                    match_b2 = pat_a.search(b.description)
-                    if match_a2 and match_b2:
-                        confidence = default_conf
-                        if default_conf == "strong" and overlap < self.overlap_threshold:
-                            confidence = "heuristic"
-                        findings.append(
-                            Contradiction(
-                                requirement_a=a.id,
-                                requirement_b=b.id,
-                                snippet_a=match_a2.group(0),
-                                snippet_b=match_b2.group(0),
-                                reason=(
-                                    f"'{match_a2.group(0)}' in {a.id} conflicts with "
-                                    f"'{match_b2.group(0)}' in {b.id}"
-                                ),
-                                severity="warning" if confidence == "strong" else "info",
-                                confidence=confidence,
-                            )
+                    key = tuple(sorted([ra.id, rb.id]) + [ma.group(0).lower(), mb.group(0).lower()])
+                    if key in seen_pairs:
+                        continue
+                    pair_checks += 1
+                    if pair_checks > self.max_pair_checks:
+                        truncated = True
+                        break
+                    overlap = _content_overlap(ra.description, rb.description)
+                    conf = default_conf
+                    if default_conf == "strong" and overlap < self.overlap_threshold:
+                        conf = "heuristic"
+                    # For heuristic pairs, require some overlap to reduce FPs
+                    if conf == "heuristic" and overlap < 0.05:
+                        continue
+                    seen_pairs.add(key)
+                    findings.append(
+                        Contradiction(
+                            requirement_a=ra.id,
+                            requirement_b=rb.id,
+                            snippet_a=ma.group(0),
+                            snippet_b=mb.group(0),
+                            reason=(
+                                f"'{ma.group(0)}' in {ra.id} conflicts with "
+                                f"'{mb.group(0)}' in {rb.id}"
+                            ),
+                            severity="warning" if conf == "strong" else "info",
+                            confidence=conf,
                         )
-        return findings
+                    )
+                if truncated:
+                    break
+            if truncated:
+                break
+
+        return DetectionResult(
+            findings=findings,
+            analysis_truncated=truncated,
+            pair_checks=pair_checks,
+        )

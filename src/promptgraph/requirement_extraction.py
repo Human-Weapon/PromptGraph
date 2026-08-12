@@ -179,6 +179,9 @@ class RequirementExtractor:
 
         for segment in segments:
             description = segment.strip()
+            # PG-13: min_length is actually enforced
+            if len(description) < self.min_length:
+                continue
             if _is_actionable(segment):
                 rtype = classify_type(description)
                 prio = classify_priority(description)

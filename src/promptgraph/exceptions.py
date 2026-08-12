@@ -2,6 +2,9 @@
 
 Domain-specific exceptions so callers can handle expected failure modes
 without catching broad ``Exception``.
+
+Persistence errors are neutral (usable by SafeJsonStore without coupling
+to DecisionLedger domain types).
 """
 
 from __future__ import annotations
@@ -20,11 +23,7 @@ class ContextGraphError(PromptGraphError):
 
 
 class CycleError(ContextGraphError):
-    """Raised when adding a dependency that would create a cycle (PG-12).
-
-    The graph is documented as a DAG.  Cycles are rejected at mutation
-    time so the graph never enters an invalid internal state.
-    """
+    """Raised when adding a dependency that would create a cycle (PG-12)."""
 
 
 class TokenBudgetError(PromptGraphError):
@@ -35,16 +34,23 @@ class BudgetExceededError(TokenBudgetError):
     """Raised when mandatory content cannot fit within the configured budget."""
 
 
-class DecisionError(PromptGraphError):
-    """Raised when a decision cannot be recorded or retrieved."""
+class QuestionBudgetError(PromptGraphError):
+    """Raised when max_questions configuration is invalid."""
 
 
-class DuplicateDecisionError(DecisionError):
-    """Raised when recording a decision whose id already exists (PG-03)."""
+# --- Neutral persistence hierarchy (P3-01 / P2-02) ---
 
 
-class CorruptStorageError(PromptGraphError):
-    """Raised when persistent storage is corrupt and cannot be loaded (PG-09).
+class PersistenceError(PromptGraphError):
+    """Base for storage/IO persistence failures (domain-neutral)."""
+
+
+class StorageLockError(PersistenceError):
+    """Raised when a process lock cannot be acquired."""
+
+
+class CorruptStorageError(PersistenceError):
+    """Raised when persistent storage is corrupt or schema-invalid.
 
     The corrupt source file is quarantined (renamed) before this error
     is raised so the user can recover data.
@@ -55,5 +61,13 @@ class CorruptStorageError(PromptGraphError):
         self.quarantined_path = quarantined_path
 
 
-class PathEscapeError(PromptGraphError):
-    """Raised when a resolved path escapes the allowed base directory (PG-04)."""
+class PathEscapeError(PersistenceError):
+    """Raised when a resolved path escapes the allowed base directory."""
+
+
+class DecisionError(PromptGraphError):
+    """Raised when a decision cannot be recorded or retrieved."""
+
+
+class DuplicateDecisionError(DecisionError):
+    """Raised when recording a decision whose id already exists (PG-03)."""

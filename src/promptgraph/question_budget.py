@@ -47,7 +47,11 @@ class QuestionBudgeter:
       - prior-decision gaps (optional, from a DecisionLedger)
     """
 
-    def __init__(self, max_questions: int = 8) -> None:
+    def __init__(self, max_questions: int | None = 8) -> None:
+        if max_questions is not None and max_questions < 0:
+            from .exceptions import QuestionBudgetError
+
+            raise QuestionBudgetError(f"max_questions must be >= 0 or None, got {max_questions}.")
         self.max_questions = max_questions
         self._missing_detector = MissingRequirementDetector()
 

@@ -9,6 +9,33 @@ from .models import Decision
 from .safe_json_store import SafeJsonStore
 
 
+def _validate_ledger_schema(data: object) -> dict:
+    """Validate DecisionLedger JSON shape; raise ValueError if invalid."""
+    if not isinstance(data, dict):
+        raise ValueError("Ledger root must be a JSON object.")
+    for key, val in data.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError(f"Invalid decision id key: {key!r}")
+        if not isinstance(val, dict):
+            raise ValueError(f"Decision record {key!r} must be an object.")
+        for field in ("id", "title", "context", "decision"):
+            if field not in val:
+                raise ValueError(f"Decision {key!r} missing required field {field!r}.")
+            if not isinstance(val[field], str):
+                raise ValueError(f"Decision {key!r} field {field!r} must be a string.")
+        if val["id"] != key:
+            # allow but require id present; id should match key ideally
+            if not val["id"]:
+                raise ValueError(f"Decision {key!r} has empty id.")
+        if (
+            "rationale" in val
+            and val["rationale"] is not None
+            and not isinstance(val["rationale"], str)
+        ):
+            raise ValueError(f"Decision {key!r} rationale must be a string.")
+    return data
+
+
 class DecisionLedger:
     """A durable log of decisions backed by a JSON file."""
 
@@ -29,23 +56,29 @@ class DecisionLedger:
             return
         try:
             data = self._store.read()
-            if not isinstance(data, dict):
-                raise ValueError("Ledger root is not a JSON object.")
+            data = _validate_ledger_schema(data)
             self._items = {}
             for key, val in data.items():
                 self._items[key] = Decision.from_dict(val)
         except CorruptStorageError:
             self._items = {}
             raise
+        except (ValueError, KeyError, TypeError) as exc:
+            self._items = {}
+            # Quarantine invalid schema
+            self._store.quarantine_invalid(str(exc))
 
     def record(self, decision: Decision) -> str:
         if not decision.id:
             raise DecisionError("Decision must have a non-empty id.")
 
         def mutator(disk: object) -> dict:
-            if not isinstance(disk, dict):
+            if disk is None or disk == {}:
                 disk = {}
-            # Merge disk into memory view
+            try:
+                disk = _validate_ledger_schema(disk) if disk else {}
+            except ValueError as exc:
+                raise CorruptStorageError(str(exc)) from exc
             for key, val in disk.items():
                 if key not in self._items:
                     try:
@@ -61,10 +94,10 @@ class DecisionLedger:
             self._store.update(mutator)
         except DuplicateDecisionError:
             raise
+        except CorruptStorageError:
+            raise
         except Exception:
-            # Only roll back a newly added id if write failed after insert
             if decision.id in self._items:
-                # If disk still has it, keep memory; if we added only in memory, drop
                 try:
                     disk = self._store.read()
                     if isinstance(disk, dict) and decision.id not in disk:

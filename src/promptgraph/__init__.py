@@ -17,8 +17,11 @@ from .exceptions import (
     DecisionError,
     DuplicateDecisionError,
     PathEscapeError,
+    PersistenceError,
     PromptGraphError,
+    QuestionBudgetError,
     RequirementValidationError,
+    StorageLockError,
     TokenBudgetError,
 )
 from .models import (
@@ -48,6 +51,9 @@ __all__ = [
     "CycleError",
     "TokenBudgetError",
     "BudgetExceededError",
+    "QuestionBudgetError",
+    "PersistenceError",
+    "StorageLockError",
     "DecisionError",
     "DuplicateDecisionError",
     "CorruptStorageError",

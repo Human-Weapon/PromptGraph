@@ -1,7 +1,12 @@
 """Atomic locked JSON store — shared persistence primitive.
 
 Used by DecisionLedger and TechnicalMemory so concurrency / path /
-corruption guarantees are implemented once (NEW-01 architectural lesson).
+corruption guarantees are implemented once.
+
+P3-01: raises only neutral PersistenceError hierarchy (no domain-specific
+ledger errors).
+P2-01: re-validates lock/temp/dest containment immediately before creating
+any artifact so a post-construction junction swap leaves ZERO outside files.
 """
 
 from __future__ import annotations
@@ -14,8 +19,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .exceptions import CorruptStorageError, DecisionError, PathEscapeError
-from .path_security import resolve_canonical, validate_contained
+from .exceptions import CorruptStorageError, PathEscapeError, PersistenceError, StorageLockError
+from .path_security import assert_path_family_contained
 
 _LOCK_TIMEOUT_S = 10.0
 _LOCK_POLL_S = 0.05
@@ -24,16 +29,39 @@ _LOCK_POLL_S = 0.05
 class FileLock:
     """Cross-platform exclusive file lock (Windows msvcrt / POSIX fcntl)."""
 
-    def __init__(self, lock_path: Path, timeout: float = _LOCK_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        lock_path: Path,
+        timeout: float = _LOCK_TIMEOUT_S,
+        *,
+        pre_create_check: Callable[[Path], None] | None = None,
+    ) -> None:
         self.lock_path = lock_path
         self.timeout = timeout
         self._fh = None
+        self._pre_create_check = pre_create_check
 
     def acquire(self) -> None:
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Validate BEFORE creating parent dirs or lock file (P2-01).
+        if self._pre_create_check is not None:
+            self._pre_create_check(self.lock_path)
+
+        # Only mkdir if parent is still contained
+        parent = self.lock_path.parent
+        if self._pre_create_check is not None:
+            self._pre_create_check(parent)
+        parent.mkdir(parents=True, exist_ok=True)
+
+        # Re-check after mkdir (directory could have been swapped)
+        if self._pre_create_check is not None:
+            self._pre_create_check(self.lock_path)
+            self._pre_create_check(parent)
+
         deadline = time.monotonic() + self.timeout
         while True:
             try:
+                if self._pre_create_check is not None:
+                    self._pre_create_check(self.lock_path)
                 self._fh = open(self.lock_path, "a+b")  # noqa: SIM115
                 if os.name == "nt":
                     import msvcrt
@@ -49,6 +77,14 @@ class FileLock:
 
                     fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return
+            except PathEscapeError:
+                if self._fh is not None:
+                    try:
+                        self._fh.close()
+                    except OSError:
+                        pass
+                    self._fh = None
+                raise
             except OSError:
                 if self._fh is not None:
                     try:
@@ -57,7 +93,7 @@ class FileLock:
                         pass
                     self._fh = None
                 if time.monotonic() >= deadline:
-                    raise DecisionError(
+                    raise StorageLockError(
                         f"Could not acquire lock on {self.lock_path} within {self.timeout}s"
                     ) from None
                 time.sleep(_LOCK_POLL_S)
@@ -110,34 +146,15 @@ class SafeJsonStore:
     def assert_contained(self, target: Path) -> None:
         if self.trusted_root is None:
             return
-        root = resolve_canonical(self.trusted_root)
-        cur = Path(target)
-        checked = False
-        while True:
-            if cur.exists():
-                validate_contained(cur, root)
-                checked = True
-                break
-            if cur.parent == cur:
-                break
-            cur = cur.parent
-        resolved = resolve_canonical(target)
-        try:
-            validate_contained(resolved, root)
-        except PathEscapeError:
-            raise
-        if not checked:
-            base_cmp = str(root)
-            tgt_cmp = str(resolved)
-            if os.name == "nt":
-                base_cmp = os.path.normcase(base_cmp)
-                tgt_cmp = os.path.normcase(tgt_cmp)
-            try:
-                Path(tgt_cmp).relative_to(Path(base_cmp))
-            except ValueError as exc:
-                raise PathEscapeError(
-                    f"Path '{target}' resolves to '{resolved}' outside '{root}'."
-                ) from exc
+        assert_path_family_contained(target, trusted_root=self.trusted_root)
+
+    def _check_write_paths(self, *extra: Path) -> None:
+        """Validate destination, lock, and any temps stay inside trusted_root."""
+        if self.trusted_root is None:
+            return
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        targets = [self.path, lock_path, self.path.parent, *extra]
+        assert_path_family_contained(*targets, trusted_root=self.trusted_root)
 
     def read(self) -> Any:
         """Read JSON from disk (no lock). Returns default if missing."""
@@ -149,21 +166,48 @@ class SafeJsonStore:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             return data
         except (json.JSONDecodeError, ValueError, OSError) as exc:
-            quarantined = self.path.with_suffix(self.path.suffix + ".corrupt")
+            return self._quarantine_and_raise(exc)
+
+    def _quarantine_and_raise(self, exc: BaseException) -> None:
+        quarantined = self.path.with_suffix(self.path.suffix + ".corrupt")
+        # Quarantine must also stay inside trusted root if set
+        if self.trusted_root is not None:
             try:
+                self.assert_contained(quarantined)
+            except PathEscapeError:
+                # Fall back: don't move outside; still raise
+                raise CorruptStorageError(
+                    f"JSON store at {self.path} is corrupt: {exc}.",
+                    quarantined_path=None,
+                ) from exc
+        try:
+            if self.path.exists():
+                # If prior quarantine exists, unique name
+                if quarantined.exists():
+                    quarantined = self.path.with_suffix(
+                        self.path.suffix + f".corrupt.{os.getpid()}"
+                    )
                 self.path.rename(quarantined)
-            except OSError:
+            else:
                 quarantined = None  # type: ignore[assignment]
-            raise CorruptStorageError(
-                f"JSON store at {self.path} is corrupt: {exc}. Quarantined.",
-                quarantined_path=str(quarantined) if quarantined else None,
-            ) from exc
+        except OSError:
+            quarantined = None  # type: ignore[assignment]
+        raise CorruptStorageError(
+            f"JSON store at {self.path} is corrupt: {exc}. Quarantined.",
+            quarantined_path=str(quarantined) if quarantined else None,
+        ) from exc
+
+    def quarantine_invalid(self, reason: str) -> None:
+        """Quarantine current file and raise CorruptStorageError (schema invalid)."""
+        self._quarantine_and_raise(ValueError(reason))
 
     def write_atomic(self, data: Any) -> None:
         """Write JSON atomically with unique temp (caller must hold lock)."""
-        if self.trusted_root is not None:
-            self.assert_contained(self.path)
+        self._check_write_paths()
+        # mkdir only after containment check
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._check_write_paths()
+
         payload = json.dumps(data, indent=2, default=str)
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{self.path.name}.",
@@ -171,10 +215,14 @@ class SafeJsonStore:
             dir=str(self.path.parent),
         )
         try:
+            # Temp must remain contained
+            self._check_write_paths(Path(tmp_name))
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(payload)
                 fh.flush()
                 os.fsync(fh.fileno())
+            # Final containment check before replace
+            self._check_write_paths(Path(tmp_name))
             Path(tmp_name).replace(self.path)
         except Exception:
             try:
@@ -186,7 +234,16 @@ class SafeJsonStore:
     def update(self, mutator: Callable[[Any], Any]) -> Any:
         """Lock → read → mutator(data) → write. Returns new data."""
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        with FileLock(lock_path):
+        # Pre-validate before ANY artifact creation
+        self._check_write_paths()
+
+        def _pre(p: Path) -> None:
+            if self.trusted_root is not None:
+                assert_path_family_contained(p, trusted_root=self.trusted_root)
+
+        with FileLock(lock_path, pre_create_check=_pre if self.trusted_root else None):
+            # Re-validate under lock
+            self._check_write_paths()
             try:
                 current = self.read()
             except CorruptStorageError:
@@ -194,6 +251,8 @@ class SafeJsonStore:
             new_data = mutator(current)
             try:
                 self.write_atomic(new_data)
+            except PathEscapeError:
+                raise
             except OSError as exc:
-                raise DecisionError(f"Cannot write store {self.path}: {exc}") from exc
+                raise PersistenceError(f"Cannot write store {self.path}: {exc}") from exc
             return new_data

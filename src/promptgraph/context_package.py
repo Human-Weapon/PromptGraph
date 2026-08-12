@@ -93,6 +93,7 @@ class ContextPackageBuilder:
         system_prompt: str,
         analysis_meta: dict,
         status: PackageStatus,
+        token_budget: int,
     ) -> ContextPackage:
         pkg = ContextPackage(
             title=title,
@@ -102,7 +103,7 @@ class ContextPackageBuilder:
             contradictions=list(contradictions),
             context_nodes=[],
             status=status,
-            token_budget=self.token_budget,
+            token_budget=token_budget,
             metadata={
                 "system_prompt": system_prompt,
                 "contradiction_analysis": analysis_meta,
@@ -121,10 +122,16 @@ class ContextPackageBuilder:
         system_prompt: str = "You are a precise software engineering agent.",
         excluded_nodes: list[ContextNode] | None = None,
         *,
+        token_budget: int | None = None,
         analysis_truncated: bool = False,
         pair_checks: int = 0,
         max_pair_checks: int | None = None,
     ) -> ContextPackage:
+        # P1-01: per-call hard budget is the single source of truth when provided
+        effective_budget = self.token_budget if token_budget is None else token_budget
+        if effective_budget < 0:
+            raise TokenBudgetError("token_budget must be non-negative.")
+
         nodes = list(context_nodes or [])
         contras = list(contradictions or [])
         decs = list(decisions or [])
@@ -148,13 +155,20 @@ class ContextPackageBuilder:
 
         # Mandatory includes system_prompt (NEW-04)
         mandatory = self._mandatory_package(
-            title, list(requirements), decs, contras, system_prompt, analysis_meta, status
+            title,
+            list(requirements),
+            decs,
+            contras,
+            system_prompt,
+            analysis_meta,
+            status,
+            effective_budget,
         )
         mandatory_tokens = estimate_token_count(mandatory.prompt)
-        if mandatory_tokens > self.token_budget:
+        if mandatory_tokens > effective_budget:
             raise BudgetExceededError(
                 f"Mandatory package content requires {mandatory_tokens} tokens, "
-                f"which exceeds the hard budget of {self.token_budget}."
+                f"which exceeds the hard budget of {effective_budget}."
             )
 
         kept = list(nodes)
@@ -167,7 +181,7 @@ class ContextPackageBuilder:
                 decisions=decs,
                 contradictions=contras,
                 status=status,
-                token_budget=self.token_budget,
+                token_budget=effective_budget,
                 excluded_nodes=excluded + [n for n in nodes if n not in kept],
                 metadata={
                     "system_prompt": system_prompt,
@@ -177,14 +191,14 @@ class ContextPackageBuilder:
             package.prompt = self.render_summary(package)
             package.compute_tokens()
 
-            if package.total_tokens <= self.token_budget:
+            if package.total_tokens <= effective_budget:
                 package.budget_exceeded = False
                 return package
 
             if not kept:
                 raise BudgetExceededError(
                     f"Rendered package requires {package.total_tokens} tokens, "
-                    f"exceeding hard budget {self.token_budget}."
+                    f"exceeding hard budget {effective_budget}."
                 )
 
             kept.sort(key=lambda n: n.estimate_tokens(), reverse=True)

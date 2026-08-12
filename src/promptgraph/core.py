@@ -15,8 +15,10 @@ from .context_package import ContextPackage, ContextPackageBuilder
 from .context_selection import ContextSelector
 from .contradiction_detection import Contradiction, ContradictionDetector
 from .decision_ledger import DecisionLedger
+from .exceptions import QuestionBudgetError, TokenBudgetError
 from .missing_requirement_detection import MissingRequirement, MissingRequirementDetector
 from .models import ContextNode, Decision, Requirement  # noqa: F401
+from .path_security import is_project_local_agentops
 from .question_budget import QuestionBudgeter, QuestionSet
 from .requirement_extraction import RequirementExtractor
 from .technical_memory import TechnicalMemory
@@ -34,9 +36,14 @@ class PromptGraph:
         max_questions: int = 8,
         trusted_root: str | Path | None = None,
     ) -> None:
-        # Default trusted root = cwd when using default .agentops paths
+        if token_budget < 0:
+            raise TokenBudgetError("token_budget must be non-negative.")
+        if max_questions is not None and max_questions < 0:
+            raise QuestionBudgetError("max_questions must be non-negative.")
+
+        # Default trusted root for project-local .agentops paths (any spelling)
         if trusted_root is None and (
-            str(memory_path).startswith(".agentops") or str(decisions_path).startswith(".agentops")
+            is_project_local_agentops(memory_path) or is_project_local_agentops(decisions_path)
         ):
             trusted_root = Path.cwd()
 
@@ -132,6 +139,11 @@ class PromptGraph:
         include_prior_decisions: bool = True,
         system_prompt: str = "You are a precise software engineering agent.",
     ) -> dict[str, object]:
+        # P1-01: validate per-call budget before any pipeline work
+        if budget is not None and budget < 0:
+            raise TokenBudgetError("budget must be non-negative.")
+        effective_budget = self.token_budget if budget is None else budget
+
         requirements = self.extract_requirements(explanation)
         det_result = self.contradiction_detector.detect_with_meta(requirements)
         contradictions = det_result.findings
@@ -139,7 +151,6 @@ class PromptGraph:
         questions = self.budget_questions(requirements)
 
         query = " ".join(r.description for r in requirements)
-        effective_budget = self.token_budget if budget is None else budget
         selection = self.selector.select(query, effective_budget)
 
         decisions: list[Decision] = []
@@ -160,6 +171,7 @@ class PromptGraph:
             contradictions=contradictions,
             excluded_nodes=selection.excluded,
             system_prompt=system_prompt,
+            token_budget=effective_budget,
             analysis_truncated=det_result.analysis_truncated,
             pair_checks=det_result.pair_checks,
             max_pair_checks=self.contradiction_detector.max_pair_checks,

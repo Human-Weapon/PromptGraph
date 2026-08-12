@@ -10,6 +10,31 @@ from .exceptions import CorruptStorageError
 from .safe_json_store import SafeJsonStore
 
 
+def _validate_memory_schema(data: object) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("Memory root must be a JSON object.")
+    notes = data.get("notes", {})
+    if notes is None:
+        notes = {}
+    if not isinstance(notes, dict):
+        raise ValueError("Memory 'notes' must be an object.")
+    for key, note in notes.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError(f"Invalid note key: {key!r}")
+        if not isinstance(note, dict):
+            raise ValueError(f"Note {key!r} must be an object.")
+        if "key" not in note or not isinstance(note["key"], str) or not note["key"]:
+            raise ValueError(f"Note {key!r} missing string 'key'.")
+        if "content" not in note or not isinstance(note["content"], str):
+            raise ValueError(f"Note {key!r} missing string 'content'.")
+        if "tags" in note and note["tags"] is not None:
+            if not isinstance(note["tags"], list) or not all(
+                isinstance(t, str) for t in note["tags"]
+            ):
+                raise ValueError(f"Note {key!r} tags must be a list of strings.")
+    return data
+
+
 class TechnicalMemory:
     """Persistent technical memory storing notes and decisions by key."""
 
@@ -35,12 +60,14 @@ class TechnicalMemory:
             return
         try:
             data = self._store.read()
-            if not isinstance(data, dict):
-                raise ValueError("Memory root is not a JSON object.")
+            data = _validate_memory_schema(data)
             self._notes = dict(data.get("notes", {}))
         except CorruptStorageError:
             self._notes = {}
             raise
+        except (ValueError, KeyError, TypeError) as exc:
+            self._notes = {}
+            self._store.quarantine_invalid(str(exc))
 
     def with_decision_ledger(self, ledger: DecisionLedger) -> TechnicalMemory:
         self.ledger = ledger
@@ -58,8 +85,11 @@ class TechnicalMemory:
         def mutator(disk: object) -> dict:
             if not isinstance(disk, dict):
                 disk = {"notes": {}}
+            try:
+                disk = _validate_memory_schema(disk)
+            except ValueError as exc:
+                raise CorruptStorageError(str(exc)) from exc
             notes = dict(disk.get("notes", {}))
-            # Merge disk notes into memory
             for k, v in notes.items():
                 if k not in self._notes:
                     self._notes[k] = v
@@ -70,33 +100,33 @@ class TechnicalMemory:
         return key
 
     def get_note(self, key: str) -> dict[str, Any] | None:
-        # Prefer fresh disk view for concurrent readers
         if self.path.exists():
             try:
                 data = self._store.read()
-                if isinstance(data, dict):
-                    notes = data.get("notes", {})
-                    if key in notes:
-                        return notes[key]
+                data = _validate_memory_schema(data)
+                notes = data.get("notes", {})
+                if key in notes:
+                    return notes[key]
             except CorruptStorageError:
+                pass
+            except ValueError:
                 pass
         return self._notes.get(key)
 
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         q = query.lower()
-        # Refresh notes from disk
         if self.path.exists():
             try:
                 data = self._store.read()
-                if isinstance(data, dict):
-                    self._notes = dict(data.get("notes", {}))
-            except CorruptStorageError:
+                data = _validate_memory_schema(data)
+                self._notes = dict(data.get("notes", {}))
+            except (CorruptStorageError, ValueError):
                 pass
         results: list[dict[str, Any]] = []
         for key, note in self._notes.items():
             if (
                 q in note["content"].lower()
-                or q in " ".join(note["tags"]).lower()
+                or q in " ".join(note.get("tags") or []).lower()
                 or q in key.lower()
             ):
                 results.append({**note, "kind": "note"})

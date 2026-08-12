@@ -6,12 +6,17 @@ executes a task (that belongs to AgentGear).
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .core import PromptGraph  # noqa: A004
 from .exceptions import (
+    BudgetExceededError,
     ContextGraphError,
+    CorruptStorageError,
+    CycleError,
     DecisionError,
+    DuplicateDecisionError,
+    PathEscapeError,
     PromptGraphError,
     RequirementValidationError,
     TokenBudgetError,
@@ -20,6 +25,7 @@ from .models import (
     ContextNode,
     ContextPackage,
     Decision,
+    PackageStatus,
     Priority,
     Question,
     Requirement,
@@ -35,10 +41,16 @@ __all__ = [
     "Decision",
     "Question",
     "ContextPackage",
+    "PackageStatus",
     "PromptGraphError",
     "RequirementValidationError",
     "ContextGraphError",
+    "CycleError",
     "TokenBudgetError",
+    "BudgetExceededError",
     "DecisionError",
+    "DuplicateDecisionError",
+    "CorruptStorageError",
+    "PathEscapeError",
     "__version__",
 ]

@@ -1,6 +1,9 @@
 """ContextGraph — build a dependency graph over context elements.
 
-Enables dependency-aware traversal and detection of redundant context.
+PG-12 fix: The graph is documented as a DAG.  ``add_dependency`` now
+rejects edges that would create a cycle at mutation time, raising
+``CycleError`` immediately.  The graph never enters an invalid internal
+state.
 """
 
 from __future__ import annotations
@@ -9,12 +12,13 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from .exceptions import CycleError
 from .models import ContextNode
 
 
 @dataclass
 class Edge:
-    """A directed dependency edge: how depends_on -> why depends_on."""
+    """A directed dependency edge."""
 
     to: str
     context: str = ""
@@ -37,14 +41,45 @@ class ContextGraph:
         self._dependents.setdefault(node.id, set())
 
     def add_dependency(self, node_id: str, depends_on: str) -> None:
+        """Add a dependency edge. Raises ``CycleError`` if it would create a cycle.
+
+        PG-12: Cycles are rejected at insertion time so the graph never
+        enters an invalid state.
+        """
         if node_id not in self._nodes:
             raise KeyError(f"Unknown node: {node_id}")
         if depends_on not in self._nodes:
             raise KeyError(f"Unknown dependency node: {depends_on}")
         if node_id == depends_on:
-            raise ValueError("A node cannot depend on itself.")
+            raise CycleError("A node cannot depend on itself.")
+
+        # Check if adding this edge would create a cycle.
+        # A cycle exists if `depends_on` can already reach `node_id`
+        # via its dependency chain.  We do a DFS from depends_on.
+        if self._would_cycle(depends_on, node_id):
+            raise CycleError(
+                f"Adding dependency '{node_id}' -> '{depends_on}' would create "
+                f"a cycle ('{depends_on}' already depends on '{node_id}')."
+            )
+
         self._deps[node_id].add(depends_on)
         self._dependents[depends_on].add(node_id)
+
+    def _would_cycle(self, start: str, target: str) -> bool:
+        """Check if ``target`` is reachable from ``start`` via dependencies."""
+        if start == target:
+            return True
+        visited: set[str] = set()
+        stack = [start]
+        while stack:
+            n = stack.pop()
+            if n == target:
+                return True
+            if n in visited:
+                continue
+            visited.add(n)
+            stack.extend(self._deps.get(n, set()))
+        return False
 
     @property
     def nodes(self) -> list[ContextNode]:
@@ -60,7 +95,7 @@ class ContextGraph:
         return set(self._dependents.get(node_id, set()))
 
     def has_cycle(self) -> bool:
-        """Detect a cycle in the graph (Kahn's algorithm over remaining nodes)."""
+        """Detect a cycle (should never be True after PG-12 fix, but kept for safety)."""
 
         def _visit(n: str, visiting: set[str], visited: set[str]) -> bool:
             if n in visiting:
@@ -82,12 +117,9 @@ class ContextGraph:
         return False
 
     def topological_order(self) -> list[str]:
-        """Return node ids in dependency order (dependencies first).
-
-        Raises ValueError if the graph contains a cycle.
-        """
+        """Return node ids in dependency order (dependencies first)."""
         if self.has_cycle():
-            raise ValueError("Cannot produce topological order for a cyclic graph.")
+            raise CycleError("Cannot produce topological order for a cyclic graph.")
         indegree = {n: len(self._deps.get(n, set())) for n in self._nodes}
         queue = deque(sorted(n for n, d in indegree.items() if d == 0))
         order: list[str] = []
@@ -104,12 +136,7 @@ class ContextGraph:
         return order
 
     def closure_from(self, seed_ids: Iterable[str], direction: str = "dependencies") -> set[str]:
-        """Return the full transitive closure reachable from seed nodes.
-
-        direction='dependencies' follows 'X depends on Y' edges (upstream).
-        direction='dependents' follows 'X is a dependency of Y' edges (downstream).
-        Raises KeyError on unknown seed id.
-        """
+        """Return the full transitive closure reachable from seed nodes."""
         seeds = list(seed_ids)
         for s in seeds:
             if s not in self._nodes:

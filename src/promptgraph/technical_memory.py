@@ -1,8 +1,7 @@
-"""PersistentTechnicalMemory — durable storage of technical facts and decisions.
+"""PersistentTechnicalMemory — durable storage of technical facts.
 
-Provides a simple, standalone, persistence layer for technical memory. It is
-backed by the DecisionLedger plus a freeform notes store so project knowledge
-can be recalled across sessions without re-asking the user.
+PG-09 fix: Corrupt JSON is now quarantined and raised as
+``CorruptStorageError`` instead of silently starting fresh.
 """
 
 from __future__ import annotations
@@ -12,30 +11,39 @@ from pathlib import Path
 from typing import Any
 
 from .decision_ledger import DecisionLedger
+from .exceptions import CorruptStorageError
 
 
 class TechnicalMemory:
-    """Persistent technical memory storing notes and decisions by key.
-
-    - `record_note(key, content, tags)` stores freeform technical facts.
-    - `search(query)` retrieves matching notes and decisions.
-    - Data is stored as JSON at the configured path.
-    """
+    """Persistent technical memory storing notes and decisions by key."""
 
     def __init__(self, path: str | Path = "memory.json") -> None:
         self.path = Path(path)
         self._notes: dict[str, dict[str, Any]] = {}
-        self.ledger = None  # Decided ledger attached lazily via .with_ledger()
+        self.ledger: DecisionLedger | None = None
         self._load()
 
     def _load(self) -> None:
-        if self.path.exists():
+        if not self.path.exists():
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Memory root is not a JSON object.")
+            self._notes = dict(data.get("notes", {}))
+        except (json.JSONDecodeError, ValueError) as exc:
+            # PG-09: quarantine corrupt file with structured error.
+            quarantined = self.path.with_suffix(self.path.suffix + ".corrupt")
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-                self._notes = dict(data.get("notes", {}))
-            except (json.JSONDecodeError, OSError):
-                # Corrupt memory file should not crash load; start fresh and warn via attr.
-                self._notes = {}
+                self.path.rename(quarantined)
+            except OSError:
+                quarantined = None  # type: ignore[assignment]
+            self._notes = {}
+            raise CorruptStorageError(
+                f"Technical memory at {self.path} is corrupt: {exc}. "
+                f"The corrupt file has been quarantined.",
+                quarantined_path=str(quarantined) if quarantined else None,
+            ) from exc
 
     def _save(self) -> None:
         payload = {"notes": self._notes}

@@ -5,7 +5,10 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .contradiction_detection import Contradiction
 
 
 class Priority(enum.IntEnum):
@@ -30,6 +33,14 @@ class RequirementType(enum.Enum):
     SECURITY = "security"
     BUSINESS = "business"
     UNKNOWN = "unknown"
+
+
+class PackageStatus(enum.Enum):
+    """Readiness status of a generated ContextPackage."""
+
+    READY = "ready"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    BLOCKED = "blocked"
 
 
 @dataclass
@@ -136,7 +147,7 @@ class Decision:
             title=data["title"],
             context=data["context"],
             decision=data["decision"],
-            rationale=data["rationale"],
+            rationale=data.get("rationale", ""),
             alternatives=list(data.get("alternatives", [])),
             created_at=datetime.fromisoformat(data["created_at"]),
             requirements=list(data.get("requirements", [])),
@@ -162,34 +173,49 @@ class Question:
         }
 
 
+def estimate_token_count(text: str, chars_per_token: int = 4) -> int:
+    """Single authoritative token estimation function.
+
+    Used by all components to avoid double-counting.
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // chars_per_token)
+
+
 @dataclass
 class ContextPackage:
-    """The final assembled context package delivered to an agent."""
+    """The final assembled context package delivered to an agent.
+
+    Token accounting is authoritative: ``total_tokens`` reflects the cost
+    of the *rendered* prompt only (no double-counting of node content).
+    Contradictions detected during analysis are propagated here so they
+    cannot be silently lost between analysis and output.
+    """
 
     title: str
     prompt: str
     context_nodes: list[ContextNode] = field(default_factory=list)
     requirements: list[Requirement] = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
+    contradictions: list[Contradiction] = field(default_factory=list)
+    status: PackageStatus = PackageStatus.READY
+    token_budget: int = 0
     total_tokens: int = 0
+    budget_exceeded: bool = False
+    excluded_nodes: list[ContextNode] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def compute_tokens(self) -> int:
-        """Compute total tokens from content and node estimates."""
+        """Compute total tokens from the *rendered prompt text only*.
 
-        def _est(text: str) -> int:
-            return max(1, len(text) // 4)
-
-        total = _est(self.prompt)
-        for node in self.context_nodes:
-            total += node.estimate_tokens()
-        for req in self.requirements:
-            total += _est(req.description)
-        for dec in self.decisions:
-            total += _est(dec.decision)
-        self.total_tokens = total
-        return total
+        This is the single authoritative accounting path.  The rendered
+        prompt already contains all requirement descriptions, node
+        content, and decisions — so we count it once.
+        """
+        self.total_tokens = estimate_token_count(self.prompt)
+        return self.total_tokens
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -198,7 +224,12 @@ class ContextPackage:
             "context_nodes": [n.to_dict() for n in self.context_nodes],
             "requirements": [r.to_dict() for r in self.requirements],
             "decisions": [d.to_dict() for d in self.decisions],
+            "contradictions": [c.to_dict() for c in self.contradictions],
+            "status": self.status.value,
+            "token_budget": self.token_budget,
             "total_tokens": self.total_tokens,
+            "budget_exceeded": self.budget_exceeded,
+            "excluded_nodes": [n.to_dict() for n in self.excluded_nodes],
             "created_at": self.created_at.isoformat(),
             "metadata": dict(self.metadata),
         }

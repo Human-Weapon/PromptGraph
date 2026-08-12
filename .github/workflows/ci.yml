@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+      - name: Run tests
+        run: pytest tests/ --tb=short -q
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Clean install test
+        run: |
+          pip uninstall promptgraph -y
+          pip install dist/*.whl
+          python -c "import promptgraph; print('import OK:', promptgraph.__version__)"
+
+      - name: CLI smoke test
+        run: |
+          python -m promptgraph status
+          python -m promptgraph prepare -e "Must encrypt user data."
+
+      - name: Standalone test (no siblings)
+        run: |
+          python -c "
+          import promptgraph
+          pg = promptgraph.PromptGraph()
+          result = pg.prepare('Must support login.')
+          assert result['requirements'], 'No requirements extracted'
+          integrations = pg.detect_integrations()
+          assert all(v is False for v in integrations.values()), 'Unexpected siblings found'
+          print('Standalone OK')
+          "

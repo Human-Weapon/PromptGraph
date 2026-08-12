@@ -81,7 +81,8 @@ def _split_sentences(text: str) -> list[str]:
     for p in parts:
         p = p.strip()
         # Also break on explicit numbered/bullet separators.
-        sub = re.split(r"\s*[•\-]\s*|\s*\d+[.)]\s*", p)
+        # Only split on standalone bullets (space-dash-space), not intra-word hyphens.
+        sub = re.split(r"\s+[•\-]\s+|\s+\d+[.)]\s+", p)
         for s in sub:
             s = s.strip()
             if s:
@@ -106,6 +107,26 @@ def _is_actionable(segment: str) -> bool:
 def _is_vague(segment: str) -> bool:
     """Heuristic: detect vagueness markers that need a clarifying question."""
     return bool(_VAGUE.search(segment))
+
+
+def _is_substantive(segment: str) -> bool:
+    """Heuristic: a segment is substantive if it has meaningful content.
+
+    Used to preserve non-English or stylistically different input rather
+    than silently dropping it (PG-06).  A segment is substantive if it
+    has at least 10 characters and contains word-like tokens (letters
+    from any script, or CJK characters).
+    """
+    stripped = segment.strip()
+    if len(stripped) < 10:
+        return False
+    # Check for CJK characters, Cyrillic, Arabic, or general word patterns.
+    # This is intentionally permissive — we'd rather surface than drop.
+    if re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u0400-\u04ff\u0600-\u06ff]", stripped):
+        return True  # CJK / Cyrillic / Arabic script detected
+    # At least 3 word-like tokens of length >= 2.
+    tokens = re.findall(r"[a-zA-Z\u00C0-\u024F]{2,}", stripped)
+    return len(tokens) >= 3
 
 
 def classify_type(description: str) -> RequirementType:
@@ -142,6 +163,12 @@ class RequirementExtractor:
 
         Returns a list of requirements. Ambiguous/vague segments are returned
         with a flag (via tags) so PromptGraph can ask targeted questions.
+
+        PG-06 fix: Segments that contain substantive content but don't match
+        any English imperative keyword are preserved as UNKNOWN requirements
+        (tagged 'low_confidence' and 'possibly_non_english') rather than
+        silently dropped.  This ensures multilingual input is surfaced for
+        the user to review.
         """
         if not isinstance(explanation, str) or not explanation.strip():
             raise RequirementValidationError("Explanation must be a non-empty string.")
@@ -151,25 +178,39 @@ class RequirementExtractor:
         counter = 0
 
         for segment in segments:
-            if not _is_actionable(segment):
-                continue
             description = segment.strip()
-            rtype = classify_type(description)
-            prio = classify_priority(description)
-            tags: list[str] = []
-            if _is_vague(description):
-                tags.append("needs_clarification")
-            counter += 1
-            requirements.append(
-                Requirement(
-                    id=f"R{counter}",
-                    description=description,
-                    requirement_type=rtype,
-                    priority=prio,
-                    source=segment,
-                    tags=tags,
+            if _is_actionable(segment):
+                rtype = classify_type(description)
+                prio = classify_priority(description)
+                tags: list[str] = []
+                if _is_vague(description):
+                    tags.append("needs_clarification")
+                counter += 1
+                requirements.append(
+                    Requirement(
+                        id=f"R{counter}",
+                        description=description,
+                        requirement_type=rtype,
+                        priority=prio,
+                        source=segment,
+                        tags=tags,
+                    )
                 )
-            )
+            elif _is_substantive(segment):
+                # PG-06: Preserve substantive segments that don't match
+                # English imperative patterns. These may be non-English
+                # or stylistically different. Surface them as UNKNOWN.
+                counter += 1
+                requirements.append(
+                    Requirement(
+                        id=f"R{counter}",
+                        description=description,
+                        requirement_type=RequirementType.UNKNOWN,
+                        priority=Priority.P2,
+                        source=segment,
+                        tags=["low_confidence", "possibly_non_english"],
+                    )
+                )
         return requirements
 
     def extract_preserving_all(self, explanation: str) -> list[Requirement]:

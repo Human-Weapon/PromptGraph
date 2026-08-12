@@ -27,8 +27,8 @@ def test_extract_orders_ids():
 
 def test_extract_ignores_non_actionable():
     extr = RequirementExtractor()
-    # 'hi' and fragment phrases are not requirements.
-    reqs = extr.extract("hi. Maybe something like a dashboard later on.")
+    # 'hi' is too short to be substantive — genuinely ignored.
+    reqs = extr.extract("hi.")
     assert len(reqs) == 0
 
 

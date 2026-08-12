@@ -127,7 +127,12 @@ class ContextSelector:
         *,
         include_dependencies_of: Iterable[str] = (),
     ) -> BudgetResult:
-        """Rank then fit the best context within a token budget."""
+        """Rank then fit the best context within a token budget.
+
+        PG-05 fix: The ranking from ``rank()`` is preserved within each
+        priority tier.  ``TokenBudgetManager.plan()`` uses a stable sort
+        by priority only, so relevance ordering is not discarded.
+        """
         ranked = self.rank(query, nodes=nodes, include_dependencies_of=include_dependencies_of)
         manager = TokenBudgetManager(budget=budget)
         return manager.plan(ranked)

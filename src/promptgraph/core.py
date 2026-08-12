@@ -8,6 +8,9 @@ Pipeline:
       → DecisionLedger / TechnicalMemory → prior decisions consulted
       → ContextSelector → relevant context nodes
       → ContextPackageBuilder → final prompt/context package
+
+PG-02 fix: Contradictions are propagated to the final package.
+PG-08 fix: ``budget=0`` means zero; ``None`` means use default.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from .context_selection import ContextSelector
 from .contradiction_detection import Contradiction, ContradictionDetector
 from .decision_ledger import DecisionLedger
 from .missing_requirement_detection import MissingRequirement, MissingRequirementDetector
-from .models import ContextNode, Decision, Question, Requirement  # noqa: F401 (re-export)
+from .models import ContextNode, Decision, Requirement  # noqa: F401 (re-export)
 from .question_budget import QuestionBudgeter, QuestionSet
 from .requirement_extraction import RequirementExtractor
 from .technical_memory import TechnicalMemory
@@ -102,9 +105,11 @@ class PromptGraph:
         *,
         include_dependencies_of: Iterable[str] = (),
     ) -> BudgetResult:
+        # PG-08: explicit None check instead of falsy `or`.
+        effective_budget = self.token_budget if budget is None else budget
         return self.selector.select(
             query,
-            budget or self.token_budget,
+            effective_budget,
             include_dependencies_of=include_dependencies_of,
         )
 
@@ -115,8 +120,17 @@ class PromptGraph:
         requirements: list[Requirement],
         context_nodes: list[ContextNode] | None = None,
         decisions: list[Decision] | None = None,
+        contradictions: list[Contradiction] | None = None,
+        excluded_nodes: list[ContextNode] | None = None,
     ) -> ContextPackage:
-        return self.builder.build(title, requirements, context_nodes, decisions)
+        return self.builder.build(
+            title,
+            requirements,
+            context_nodes,
+            decisions,
+            contradictions=contradictions,
+            excluded_nodes=excluded_nodes,
+        )
 
     # --- Full pipeline convenience -------------------------------------------
     def prepare(
@@ -136,11 +150,12 @@ class PromptGraph:
         # Build a context query from the requirement descriptions.
         query = " ".join(r.description for r in requirements)
 
-        selection = self.selector.select(query, budget or self.token_budget)
+        # PG-08: explicit None check.
+        effective_budget = self.token_budget if budget is None else budget
+        selection = self.selector.select(query, effective_budget)
 
         decisions: list[Decision] = []
         if include_prior_decisions:
-            # Pull the top related prior decisions.
             for d in self.ledger.all():
                 if any(
                     t in d.decision.lower() or t in d.title.lower()
@@ -149,7 +164,15 @@ class PromptGraph:
                     decisions.append(d)
             decisions = decisions[:5]
 
-        package = self.builder.build(title, requirements, selection.selected, decisions)
+        # PG-02: propagate contradictions to the package.
+        package = self.builder.build(
+            title,
+            requirements,
+            selection.selected,
+            decisions,
+            contradictions=contradictions,
+            excluded_nodes=selection.excluded,
+        )
 
         return {
             "requirements": requirements,
@@ -159,4 +182,6 @@ class PromptGraph:
             "context_nodes": selection.selected,
             "package": package,
             "total_tokens": package.total_tokens,
+            "package_status": package.status.value,
+            "budget_exceeded": package.budget_exceeded,
         }

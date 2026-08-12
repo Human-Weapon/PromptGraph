@@ -1,6 +1,10 @@
 """PromptGraph command-line interface.
 
 Uses argparse (stdlib) for a dependency-light CLI.
+
+PG-10 fix: Expected user errors produce concise stderr messages with
+stable non-zero exit codes instead of Python tracebacks.  Core APIs
+remain exception-based and reusable programmatically.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from .core import PromptGraph
+from .exceptions import PromptGraphError
 from .models import Decision
 
 
@@ -18,8 +23,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promptgraph",
         description=(
-            "Transform human intent + project knowledge into precise, "
-            "efficient agent context."
+            "Transform human intent + project knowledge into precise, efficient agent context."
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -30,7 +34,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_prepare = sub.add_parser("prepare", help="Turn a messy explanation into a context package.")
     p_prepare.add_argument("--explanation", "-e", required=True, help="The messy task explanation.")
     p_prepare.add_argument("--title", default="Task context")
-    p_prepare.add_argument("--budget", type=int, default=8000, help="Token budget for context.")
+    p_prepare.add_argument(
+        "--budget",
+        type=int,
+        default=8000,
+        help="Token budget for context (0 = no context nodes).",
+    )
 
     # lint
     p_lint = sub.add_parser("lint", help="Lint a prompt file or a single prompt string.")
@@ -66,7 +75,8 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
         f"Contradictions: {len(result['contradictions'])} | "
         f"Missing dimensions: {len(result['missing_dimensions'])} | "
         f"Questions needed: {len(result['questions'])} | "
-        f"Tokens: {result['total_tokens']}"
+        f"Tokens: {result['total_tokens']} | "
+        f"Status: {result['package_status']}"
     )
     if result["questions"]:
         print("\nClarify these before proceeding:")
@@ -92,6 +102,14 @@ def _cmd_lint(args: argparse.Namespace) -> int:
         return 2
 
     issues = linter.lint(text)
+    # Also check for contradictions if text has multiple sentences.
+    from .requirement_extraction import RequirementExtractor
+
+    reqs = RequirementExtractor().extract(text)
+    if reqs:
+        contra_issues = linter.lint_requirements([r.description for r in reqs])
+        issues.extend(contra_issues)
+
     if not issues:
         print("No issues detected.")
         return 0
@@ -157,7 +175,15 @@ def main(argv: list[str] | None = None) -> int:
         "decisions": _cmd_decisions,
         "status": _cmd_status,
     }
-    return handlers[args.command](args)
+    # PG-10: catch domain errors, print concise stderr, no traceback.
+    try:
+        return handlers[args.command](args)
+    except PromptGraphError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
+        print(f"error: file not found: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

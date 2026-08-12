@@ -88,9 +88,8 @@ class QuestionBudgeter:
                     )
                 )
 
-        # 3. Truncate to budget.
-        if self.max_questions and len(qs) > self.max_questions:
-            # Keep clarification questions first, then missing-dimension ones.
+        # 3. Truncate to budget (PG-08: explicit None check, 0 is valid).
+        if self.max_questions is not None and len(qs) > self.max_questions:
             qs.questions = qs.questions[: self.max_questions]
         return qs
 

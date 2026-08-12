@@ -147,14 +147,28 @@ def test_context_graph_topological():
 
 
 def test_context_graph_cycle():
+    """PG-12: cycle-creating edge is rejected at insertion."""
+    from promptgraph.exceptions import CycleError
+
     g = ContextGraph()
     g.add_node(ContextNode(id="a", title="a", content="c"))
     g.add_node(ContextNode(id="b", title="b", content="c"))
     g.add_dependency("a", "b")
-    g.add_dependency("b", "a")
-    assert g.has_cycle()
-    with pytest.raises(ValueError):
-        g.topological_order()
+    with pytest.raises(CycleError):
+        g.add_dependency("b", "a")
+
+
+def test_context_graph_cycle_rejected_at_insert():
+    """PG-12: Cycle must be rejected at add_dependency, not later."""
+    from promptgraph.exceptions import CycleError
+
+    g = ContextGraph()
+    for nid in ("a", "b", "c"):
+        g.add_node(ContextNode(id=nid, title=nid, content="c"))
+    g.add_dependency("a", "b")
+    g.add_dependency("b", "c")
+    with pytest.raises(CycleError):
+        g.add_dependency("c", "a")
 
 
 def test_context_graph_closure():

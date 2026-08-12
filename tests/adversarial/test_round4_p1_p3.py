@@ -22,6 +22,7 @@ from promptgraph.exceptions import (
     TokenBudgetError,
 )
 from promptgraph.models import Decision, Requirement
+from promptgraph.path_security import is_project_local_agentops
 from promptgraph.question_budget import QuestionBudgeter
 from promptgraph.safe_json_store import SafeJsonStore
 from promptgraph.technical_memory import TechnicalMemory
@@ -137,6 +138,21 @@ class TestP102PathAliases:
         )
         assert pg.trusted_root is not None
 
+    def test_unrelated_absolute_agentops_path_is_not_treated_as_project_default(
+        self, tmp_path, monkeypatch
+    ):
+        project = tmp_path / "project"
+        project.mkdir()
+        unrelated = tmp_path / "external" / ".agentops" / "memory.json"
+        monkeypatch.chdir(project)
+        assert not is_project_local_agentops(unrelated)
+        assert is_project_local_agentops(project / ".agentops" / "memory.json")
+        pg = PromptGraph(
+            memory_path=unrelated,
+            decisions_path=project / "decisions.json",
+        )
+        assert pg.trusted_root is None
+
     def test_junction_rejects_all_aliases(self, tmp_path):
         if os.name != "nt":
             pytest.skip("Windows junction test")
@@ -218,6 +234,24 @@ class TestP202SchemaValidation:
         p.write_text('{"notes":{"n":{"key":"n"}}}', encoding="utf-8")
         with pytest.raises(CorruptStorageError) as ei:
             TechnicalMemory(p)
+        assert ei.value.quarantined_path is not None
+        assert Path(ei.value.quarantined_path).exists()
+
+    def test_stale_invalid_ledger_is_quarantined_before_record(self, tmp_path):
+        p = tmp_path / "d.json"
+        ledger = DecisionLedger(p)
+        p.write_text('{"d":{"id":"d"}}', encoding="utf-8")
+        with pytest.raises(CorruptStorageError) as ei:
+            ledger.record(Decision(id="new", title="new", context="", decision="use it"))
+        assert ei.value.quarantined_path is not None
+        assert Path(ei.value.quarantined_path).exists()
+
+    def test_stale_invalid_memory_is_quarantined_before_record(self, tmp_path):
+        p = tmp_path / "m.json"
+        memory = TechnicalMemory(p)
+        p.write_text('{"notes":{"n":{"key":"n"}}}', encoding="utf-8")
+        with pytest.raises(CorruptStorageError) as ei:
+            memory.record_note("new", "use it")
         assert ei.value.quarantined_path is not None
         assert Path(ei.value.quarantined_path).exists()
 

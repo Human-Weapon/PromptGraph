@@ -47,7 +47,12 @@ class DecisionLedger:
     ) -> None:
         self.path = Path(path)
         self.trusted_root = Path(trusted_root) if trusted_root is not None else None
-        self._store = SafeJsonStore(self.path, trusted_root=self.trusted_root, default=dict)
+        self._store = SafeJsonStore(
+            self.path,
+            trusted_root=self.trusted_root,
+            default=dict,
+            validator=_validate_ledger_schema,
+        )
         self._items: dict[str, Decision] = {}
         self._load()
 

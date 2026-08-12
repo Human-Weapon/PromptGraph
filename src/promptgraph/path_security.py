@@ -35,25 +35,31 @@ def normalize_path_key(path: str | Path) -> str:
     return s
 
 
-def is_project_local_agentops(path: str | Path) -> bool:
-    """True if path is a project-local .agentops path (any equivalent spelling).
+def is_project_local_agentops(path: str | Path, *, project_root: str | Path | None = None) -> bool:
+    """True if path is beneath this project's ``.agentops`` directory.
 
-    Does NOT use naive startswith('.agentops').  Handles:
+    Does NOT use naive ``startswith('.agentops')``. Handles:
       .agentops/...
       ./.agentops/...
       .\\.agentops\\...
-      absolute .../.agentops/...
+      absolute <project>/.agentops/...
+
+    An unrelated absolute path that merely contains a directory named
+    ``.agentops`` is caller-configured storage, not this project's default
+    storage, and must not silently inherit this project's trusted root.
     """
-    p = Path(path)
-    if any(part == ".agentops" for part in p.parts):
-        return True
-    # Also check normalized string for /.agentops/ or leading .agentops
-    norm = p.as_posix()
-    if norm == ".agentops" or norm.startswith(".agentops/"):
-        return True
-    if "/.agentops/" in f"/{norm}/" or norm.endswith("/.agentops"):
-        return True
-    return False
+    root = Path.cwd() if project_root is None else Path(project_root)
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+
+    root_key = Path(normalize_path_key(os.path.abspath(root)))
+    candidate_key = Path(normalize_path_key(os.path.abspath(candidate)))
+    try:
+        relative = candidate_key.relative_to(root_key)
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] == ".agentops"
 
 
 def validate_contained(

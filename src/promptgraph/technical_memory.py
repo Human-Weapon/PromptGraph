@@ -50,6 +50,7 @@ class TechnicalMemory:
             self.path,
             trusted_root=self.trusted_root,
             default=lambda: {"notes": {}},
+            validator=_validate_memory_schema,
         )
         self._notes: dict[str, dict[str, Any]] = {}
         self.ledger: DecisionLedger | None = None

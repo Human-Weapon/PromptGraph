@@ -15,6 +15,12 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
 
+    defaults:
+      run:
+        # bash expands globs and multi-line scripts consistently on
+        # Ubuntu and Windows (GitHub-hosted runners include bash).
+        shell: bash
+
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +46,9 @@ jobs:
       - name: Clean install test
         run: |
           pip uninstall promptgraph -y
-          pip install dist/*.whl
+          # Resolve wheel path in Python so this is shell-agnostic.
+          WHEEL=$(python -c "import glob,sys; ws=glob.glob('dist/*.whl'); assert ws, 'no wheel in dist/'; print(ws[0])")
+          pip install "$WHEEL"
           python -c "import promptgraph; print('import OK:', promptgraph.__version__)"
 
       - name: CLI smoke test
@@ -50,12 +58,12 @@ jobs:
 
       - name: Standalone test (no siblings)
         run: |
-          python -c "
+          python - <<'PY'
           import promptgraph
           pg = promptgraph.PromptGraph()
-          result = pg.prepare('Must support login.')
-          assert result['requirements'], 'No requirements extracted'
+          result = pg.prepare("Must support login.")
+          assert result["requirements"], "No requirements extracted"
           integrations = pg.detect_integrations()
-          assert all(v is False for v in integrations.values()), 'Unexpected siblings found'
-          print('Standalone OK')
-          "
+          assert all(v is False for v in integrations.values()), "Unexpected siblings found"
+          print("Standalone OK")
+          PY

@@ -133,7 +133,8 @@ class PromptGraph:
         system_prompt: str = "You are a precise software engineering agent.",
     ) -> dict[str, object]:
         requirements = self.extract_requirements(explanation)
-        contradictions = self.detect_contradictions(requirements)
+        det_result = self.contradiction_detector.detect_with_meta(requirements)
+        contradictions = det_result.findings
         missing = self.detect_missing(requirements)
         questions = self.budget_questions(requirements)
 
@@ -159,6 +160,9 @@ class PromptGraph:
             contradictions=contradictions,
             excluded_nodes=selection.excluded,
             system_prompt=system_prompt,
+            analysis_truncated=det_result.analysis_truncated,
+            pair_checks=det_result.pair_checks,
+            max_pair_checks=self.contradiction_detector.max_pair_checks,
         )
 
         return {
@@ -171,4 +175,6 @@ class PromptGraph:
             "total_tokens": package.total_tokens,
             "package_status": package.status.value,
             "budget_exceeded": package.budget_exceeded,
+            "analysis_truncated": det_result.analysis_truncated,
+            "pair_checks": det_result.pair_checks,
         }

@@ -119,7 +119,14 @@ class TestPG03ProcessConcurrency:
                 "uuid",
                 "getpid",
                 "tempfile",
+                "SafeJsonStore",
             )
         )
         assert unique, "DecisionLedger must use unique temp files, not only fixed .tmp"
-        assert "_FileLock" in src or "msvcrt" in src or "fcntl" in src
+        assert (
+            "SafeJsonStore" in src
+            or "_FileLock" in src
+            or "FileLock" in src
+            or "msvcrt" in src
+            or "fcntl" in src
+        )

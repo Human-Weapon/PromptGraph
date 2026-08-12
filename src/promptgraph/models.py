@@ -41,6 +41,7 @@ class PackageStatus(enum.Enum):
     READY = "ready"
     NEEDS_CLARIFICATION = "needs_clarification"
     BLOCKED = "blocked"
+    ANALYSIS_INCOMPLETE = "analysis_incomplete"
 
 
 @dataclass

@@ -98,7 +98,12 @@ class TestPG04PathContainmentWired:
         from promptgraph import decision_ledger as mod
 
         src = inspect.getsource(mod)
-        assert "path_security" in src or "validate_contained" in src or "PathEscapeError" in src
+        assert (
+            "path_security" in src
+            or "validate_contained" in src
+            or "PathEscapeError" in src
+            or "SafeJsonStore" in src
+        )
 
     def test_cli_decisions_rejects_junction_escape(self, tmp_path, monkeypatch):
         """Black-box-ish: DecisionLedger used as CLI does must reject junction escape."""

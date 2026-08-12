@@ -60,7 +60,8 @@ _PRIORITY_PATTERNS: list[tuple[re.Pattern[str], Priority]] = [
 ]
 
 _ANY_PATTERN = re.compile(
-    r"\bmust\b|\bshall\b|\bneed\b|\brequires?\b|\bshould\b|\bprovide\b|\bsupport\b|\ballow\b|\benable\b|\bnever\b",
+    r"\bmust\b|\bshall\b|\bneed\b|\brequires?\b|\bshould\b|\bprovide\b|"
+    r"\bsupport\b|\ballow\b|\benable\b|\bnever\b|\bdeny\b|\bforbid\b",
     re.I,
 )
 

@@ -175,10 +175,11 @@ class ContradictionDetector:
                     key = tuple(sorted([ra.id, rb.id]) + [ma.group(0).lower(), mb.group(0).lower()])
                     if key in seen_pairs:
                         continue
-                    pair_checks += 1
-                    if pair_checks > self.max_pair_checks:
+                    # NEW-03: hard bound — check BEFORE counting/evaluating
+                    if pair_checks >= self.max_pair_checks:
                         truncated = True
                         break
+                    pair_checks += 1
                     overlap = _content_overlap(ra.description, rb.description)
                     conf = default_conf
                     if default_conf == "strong" and overlap < self.overlap_threshold:

@@ -136,10 +136,12 @@ class SafeJsonStore:
         *,
         trusted_root: str | Path | None = None,
         default: Callable[[], Any] | None = None,
+        validator: Callable[[Any], Any] | None = None,
     ) -> None:
         self.path = Path(path)
         self.trusted_root = Path(trusted_root) if trusted_root is not None else None
         self._default = default or (lambda: {})
+        self._validator = validator
         if self.trusted_root is not None:
             self.assert_contained(self.path)
 
@@ -164,8 +166,10 @@ class SafeJsonStore:
             self.assert_contained(self.path)
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
+            if self._validator is not None:
+                data = self._validator(data)
             return data
-        except (json.JSONDecodeError, ValueError, OSError) as exc:
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError, OSError) as exc:
             return self._quarantine_and_raise(exc)
 
     def _quarantine_and_raise(self, exc: BaseException) -> None:

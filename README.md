@@ -14,10 +14,10 @@ Agents waste tokens and produce worse results when they're given redundant, vagu
 
 ## What it does NOT try to solve
 
-- ❌ **Model routing / execution strategy** → AgentGear
-- ❌ **Security validation of skills/plugins** → SkillGuard
-- ❌ **Objective measurement / benchmarks** → AgentBench
-- ❌ **Continuous improvement** → ProjectKaizen
+- ❌ **Model routing / execution strategy** → [AgentGear](https://github.com/Human-Weapon/AgentGear)
+- ❌ **Security validation of skills/plugins** → [SkillGuard](https://github.com/Human-Weapon/SkillGuard)
+- ❌ **Objective measurement / benchmarks** → [AgentBench](https://github.com/Human-Weapon/AgentBench)
+- ❌ **Continuous improvement** → [ProjectKaizen](https://github.com/Human-Weapon/ProjectKaizen)
 - ❌ **Guaranteed "best" prompt** — linting is heuristic, not exhaustive
 
 ---
@@ -126,9 +126,10 @@ None are required. When present, PromptGraph can use them:
 
 | Sibling | Optional benefit |
 |---|---|
-| `agentbench` | Use benchmark evidence to tune context selection |
-| `agentgear` | Receive execution feedback to refine context |
-| `projectkaizen` | Read improvement recommendations |
+| [AgentBench](https://github.com/Human-Weapon/AgentBench) | Use benchmark evidence to tune context selection |
+| [AgentGear](https://github.com/Human-Weapon/AgentGear) | Receive execution feedback to refine context |
+| [SkillGuard](https://github.com/Human-Weapon/SkillGuard) | Security-audit sibling; not directly consumed here |
+| [ProjectKaizen](https://github.com/Human-Weapon/ProjectKaizen) | Read improvement recommendations |
 
 Because integration is via `importlib.find_spec`, a missing sibling **never** breaks the package. See `promptgraph/_sibling_utils.py`.
 

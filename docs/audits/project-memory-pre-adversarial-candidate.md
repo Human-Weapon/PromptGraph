@@ -9,8 +9,8 @@ This document does not self-certify a release.
 | Field | Value |
 |---|---|
 | Base SHA | `20ac5ffc30dc13f5a689ab015eb2af9210f89ab5` |
-| Implementation SHA | (same as final candidate; recorded after push) |
-| Final candidate SHA | (recorded after `origin/main` update) |
+| Implementation SHA | `edb973c49b93457b269be088b286faaafae128f9` |
+| Final candidate SHA | `edb973c49b93457b269be088b286faaafae128f9` plus this documentation note |
 | Declared version | `0.1.1` |
 | Release promotion | **not performed** |
 

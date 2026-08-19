@@ -8,7 +8,7 @@ import pytest
 
 from promptgraph.exceptions import PathEscapeError
 from promptgraph.memory import ProjectMemory
-from promptgraph.memory.models import MemoryType
+from promptgraph.memory.models import MemoryType, StorageScope
 from promptgraph.path_security import validate_contained
 from tests.memory.helpers import failure_candidate
 
@@ -78,7 +78,7 @@ def test_nested_link_escape(tmp_path):
     mem = ProjectMemory(project, trusted_root=project)
     mem.vault.init()
     with pytest.raises(PathEscapeError):
-        mem.record_memory(failure_candidate())
+        mem.record_memory(failure_candidate(scope=StorageScope.LOCAL_ONLY))
 
 
 def test_validate_contained_used():

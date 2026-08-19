@@ -106,10 +106,13 @@ class MemoryVault:
         return contained.relative_to(self._assert_contained(self.root)).as_posix()
 
     def resolve_rel(self, relpath: str) -> Path:
-        if not relpath or relpath.startswith("/") or relpath.startswith("\\"):
+        if not relpath:
             raise PathEscapeError(f"Invalid memory path: {relpath!r}")
-        parts = Path(relpath).parts
-        if any(p in {"..", ""} for p in parts):
+        unified = relpath.replace("\\", "/")
+        if unified.startswith("/") or (len(unified) >= 2 and unified[1] == ":"):
+            raise PathEscapeError(f"Invalid memory path: {relpath!r}")
+        parts = [part for part in unified.split("/") if part not in {"", "."}]
+        if not parts or any(part == ".." for part in parts):
             raise PathEscapeError(f"Invalid memory path: {relpath!r}")
         joined = safe_join(self.root, *parts)
         return self._assert_contained(joined)

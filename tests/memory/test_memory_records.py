@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 
 import pytest
-from tests.memory.conftest import failure_candidate
 
 from promptgraph.exceptions import DuplicateMemoryError, MemoryValidationError
 from promptgraph.memory.models import (
@@ -14,6 +13,7 @@ from promptgraph.memory.models import (
     RecordStatus,
     RootCauseStatus,
 )
+from tests.memory.helpers import failure_candidate
 
 
 def test_unknown_type_rejected():

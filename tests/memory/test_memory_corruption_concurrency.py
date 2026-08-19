@@ -3,12 +3,12 @@ from __future__ import annotations
 import multiprocessing as mp
 
 import pytest
-from tests.memory.conftest import failure_candidate
 
 from promptgraph.exceptions import MemoryValidationError
 from promptgraph.memory import ProjectMemory
 from promptgraph.memory.host import ProjectMemory as PM
 from promptgraph.memory.serialize import parse_frontmatter
+from tests.memory.helpers import failure_candidate
 
 
 def test_invalid_utf8(memory):

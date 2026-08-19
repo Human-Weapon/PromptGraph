@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.cli import main
 from promptgraph.memory.context_pack import MemoryContextPackBuilder
 from promptgraph.memory.models import Disposition, MemoryType, StorageScope
+from tests.memory.helpers import failure_candidate
 
 
 def test_suggest_consolidation(memory):

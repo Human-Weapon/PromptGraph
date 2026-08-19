@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.core import PromptGraph
 from promptgraph.memory.models import MemoryCandidate, MemoryType, StorageScope
 from promptgraph.memory.session import checkpoint_candidate_from_kwargs, plan_compaction
+from tests.memory.helpers import failure_candidate
 
 
 def test_failure_repetition_across_sessions(project):

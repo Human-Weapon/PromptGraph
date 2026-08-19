@@ -5,12 +5,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from tests.memory.conftest import failure_candidate
 
 from promptgraph.exceptions import PathEscapeError
 from promptgraph.memory import ProjectMemory
 from promptgraph.memory.models import MemoryType
 from promptgraph.path_security import validate_contained
+from tests.memory.helpers import failure_candidate
 
 
 def _junction_or_symlink(link: Path, target: Path) -> None:

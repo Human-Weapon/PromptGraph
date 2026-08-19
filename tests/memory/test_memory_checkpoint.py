@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.memory.session import checkpoint_is_stale
+from tests.memory.helpers import failure_candidate
 
 
 def test_checkpoint_and_freshness(memory):

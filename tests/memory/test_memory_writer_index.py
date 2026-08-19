@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.memory.models import RecordStatus
+from tests.memory.helpers import failure_candidate
 
 
 def test_readback_and_index(memory):

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.memory.models import Disposition, MemoryCandidate, MemoryType, StorageScope
 from promptgraph.models import estimate_token_count
+from tests.memory.helpers import failure_candidate
 
 
 def test_large_vault_bounded_retrieval(memory):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from tests.memory.conftest import failure_candidate
 
 from promptgraph.exceptions import TokenBudgetError
+from tests.memory.helpers import failure_candidate
 
 
 def _seed(memory):

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.memory.models import MemoryRecord, MemoryType, StorageScope
 from promptgraph.memory.serialize import (
     extract_wiki_ids,
@@ -9,6 +7,7 @@ from promptgraph.memory.serialize import (
     parse_frontmatter,
     record_to_markdown,
 )
+from tests.memory.helpers import failure_candidate
 
 
 def test_roundtrip_failure(memory):

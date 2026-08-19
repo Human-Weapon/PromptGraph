@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from tests.memory.conftest import failure_candidate
-
 from promptgraph.memory.graph import MemoryGraph
 from promptgraph.memory.models import RelationType
+from tests.memory.helpers import failure_candidate
 
 
 def test_graph_roundtrip_and_supersession(memory):

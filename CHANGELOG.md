@@ -5,6 +5,24 @@ All notable changes to PromptGraph are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Persistent project-memory vault under `.agentops/promptgraph/`
+  (Markdown canonical, rebuildable `index.json` / `graph.json`).
+- Memory types, dispositions, failure/attempt/lesson records, checkpoints,
+  context packs, and declared-context compaction manifests.
+- CLI: `memory init|status|validate|search|show|record|checkpoint|rebuild|compact-plan`
+  and `context build`, with pure `--json` output.
+- Provider-neutral host API on `PromptGraph`: `record_memory`,
+  `checkpoint_session`, `build_context_pack`, `search_memory`,
+  `validate_memory`, `plan_compaction`.
+- Docs and `examples/project-memory` sample vault.
+
+Version remains **0.1.1**. Release promotion is left for the independent
+audit. No tag, GitHub Release, or PyPI publish is made by this change.
+
 ## [0.1.1] — 2026-08-12
 
 ### Summary

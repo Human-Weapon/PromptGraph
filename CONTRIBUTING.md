@@ -19,6 +19,7 @@ pip install -e ".[dev]"
 ```bash
 pytest                      # run tests
 ruff check src/ tests/      # lint
+ruff format --check src tests
 ```
 
 ## Commit conventions

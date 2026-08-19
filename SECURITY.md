@@ -15,9 +15,12 @@ We will acknowledge receipt within 48 hours and work toward a coordinated disclo
 
 PromptGraph is a **context preparation** library and CLI. Its security-sensitive surface is:
 
-- **Local file I/O**: decision ledgers, technical memory, context packages are written under your configured paths (default `.agentops/`).
+- **Local file I/O**: decision ledgers, technical memory, project-memory Markdown, and context packages are written under your configured paths (default `.agentops/`).
 - **No network calls**: PromptGraph never sends data anywhere.
 - **No arbitrary code execution** from untrusted content.
+- **No raw chat archive by default.** Distilled project knowledge only.
+- **Local-only memory** (`.agentops/promptgraph/local/`) and generated context packs are gitignored by the vault. PromptGraph never runs `git add` / `commit` / `push`.
+- Secret-like redaction is defense in depth only. PromptGraph does not claim complete secret detection. That is closer to SkillGuard's job.
 
 ## What PromptGraph deliberately does NOT do
 

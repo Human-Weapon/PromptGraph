@@ -1,0 +1,45 @@
+{
+  "edges": [
+    {
+      "relation": "relates_to",
+      "source": "CP-0001",
+      "target": "DEC-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "CP-0001",
+      "target": "FAIL-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "CP-0001",
+      "target": "LESSON-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "CP-0001",
+      "target": "REQ-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "DEC-0001",
+      "target": "REQ-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "FAIL-0001",
+      "target": "DEC-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "FAIL-0001",
+      "target": "REQ-0001"
+    },
+    {
+      "relation": "relates_to",
+      "source": "LESSON-0001",
+      "target": "FAIL-0001"
+    }
+  ],
+  "version": 1
+}

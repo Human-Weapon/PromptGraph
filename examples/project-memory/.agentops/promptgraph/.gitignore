@@ -1,0 +1,6 @@
+local/
+context-packs/
+*.lock
+*.tmp
+*.corrupt
+*.corrupt.*

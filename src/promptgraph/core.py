@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from . import _sibling_utils
 from .context_graph import ContextGraph
@@ -16,6 +17,14 @@ from .context_selection import ContextSelector
 from .contradiction_detection import Contradiction, ContradictionDetector
 from .decision_ledger import DecisionLedger
 from .exceptions import QuestionBudgetError, TokenBudgetError
+from .memory.host import ProjectMemory
+from .memory.models import (
+    CompactionManifest,
+    MemoryCandidate,
+    MemoryRecord,
+    RetrievalHit,
+    ValidationReport,
+)
 from .missing_requirement_detection import MissingRequirement, MissingRequirementDetector
 from .models import ContextNode, Decision, Requirement  # noqa: F401
 from .path_security import is_project_local_agentops
@@ -35,31 +44,73 @@ class PromptGraph:
         token_budget: int = 8000,
         max_questions: int = 8,
         trusted_root: str | Path | None = None,
+        project_root: str | Path | None = None,
+        memory_root: str | Path | None = None,
     ) -> None:
         if token_budget < 0:
             raise TokenBudgetError("token_budget must be non-negative.")
         if max_questions is not None and max_questions < 0:
             raise QuestionBudgetError("max_questions must be non-negative.")
 
+        self.project_root = Path(project_root) if project_root is not None else Path.cwd()
+        resolved_memory = Path(memory_path)
+        resolved_decisions = Path(decisions_path)
+        if not resolved_memory.is_absolute():
+            resolved_memory = self.project_root / resolved_memory
+        if not resolved_decisions.is_absolute():
+            resolved_decisions = self.project_root / resolved_decisions
+
         # Default trusted root for project-local .agentops paths (any spelling)
         if trusted_root is None and (
-            is_project_local_agentops(memory_path) or is_project_local_agentops(decisions_path)
+            is_project_local_agentops(resolved_memory, project_root=self.project_root)
+            or is_project_local_agentops(resolved_decisions, project_root=self.project_root)
         ):
-            trusted_root = Path.cwd()
+            trusted_root = self.project_root
 
         self.trusted_root = Path(trusted_root) if trusted_root is not None else None
+        self.memory_root = Path(memory_root) if memory_root is not None else None
+        self._project_memory: ProjectMemory | None = None
         self.extractor = RequirementExtractor()
         self.contradiction_detector = ContradictionDetector()
         self.missing_detector = MissingRequirementDetector()
         self.question_budgeter = QuestionBudgeter(max_questions=max_questions)
         self.token_budget = token_budget
         self.graph = ContextGraph()
-        self.memory = TechnicalMemory(memory_path, trusted_root=self.trusted_root)
-        self.ledger = DecisionLedger(decisions_path, trusted_root=self.trusted_root)
+        self.memory = TechnicalMemory(resolved_memory, trusted_root=self.trusted_root)
+        self.ledger = DecisionLedger(resolved_decisions, trusted_root=self.trusted_root)
         self.memory.with_decision_ledger(self.ledger)
         self.selector = ContextSelector(self.graph)
         self.builder = ContextPackageBuilder(token_budget=token_budget)
         self._integrations: dict[str, object] = {}
+
+    @property
+    def project_memory(self) -> ProjectMemory:
+        if self._project_memory is None:
+            trusted = self.trusted_root or self.project_root
+            self._project_memory = ProjectMemory(
+                self.project_root,
+                memory_root=self.memory_root,
+                trusted_root=trusted,
+            )
+        return self._project_memory
+
+    def record_memory(self, candidate: MemoryCandidate | dict[str, Any]) -> MemoryRecord:
+        return self.project_memory.record_memory(candidate)
+
+    def checkpoint_session(self, **kwargs: Any) -> MemoryRecord:
+        return self.project_memory.checkpoint_session(**kwargs)
+
+    def build_context_pack(self, task: str, **kwargs: Any):
+        return self.project_memory.build_context_pack(task, **kwargs)
+
+    def search_memory(self, query: str, **kwargs: Any) -> list[RetrievalHit]:
+        return self.project_memory.search_memory(query, **kwargs)
+
+    def validate_memory(self) -> ValidationReport:
+        return self.project_memory.validate_memory()
+
+    def plan_compaction(self, **kwargs: Any) -> CompactionManifest:
+        return self.project_memory.plan_compaction(**kwargs)
 
     def detect_integrations(self) -> dict[str, bool]:
         return {

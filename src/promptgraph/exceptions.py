@@ -71,3 +71,19 @@ class DecisionError(PromptGraphError):
 
 class DuplicateDecisionError(DecisionError):
     """Raised when recording a decision whose id already exists (PG-03)."""
+
+
+class MemoryError(PromptGraphError):
+    """Raised when persistent project memory cannot be read or written."""
+
+
+class DuplicateMemoryError(MemoryError):
+    """Raised when a memory record id already exists."""
+
+
+class MemoryValidationError(MemoryError):
+    """Raised when a memory record or vault fails validation."""
+
+
+class MemoryIntegrityError(MemoryError):
+    """Raised when readback, fingerprint, or index verification fails."""

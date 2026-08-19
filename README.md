@@ -4,6 +4,8 @@
 
 PromptGraph is the **context preparation** tool of the HERMES OSS ecosystem. It takes a messy, unstructured explanation of a task, breaks it into structured requirements, detects gaps and contradictions, asks *only* the necessary clarifying questions, consults prior decisions, and assembles a token-budgeted context package that an agent can consume directly.
 
+It also keeps **persistent project memory** so later agent sessions can resume from verified knowledge instead of a chat transcript. Persist knowledge, not conversation.
+
 > **It decides WHAT CONTEXT to deliver. It does not decide how a task should be executed** — that belongs to AgentGear.
 
 ---
@@ -19,6 +21,8 @@ Agents waste tokens and produce worse results when they're given redundant, vagu
 - ❌ **Objective measurement / benchmarks** → [AgentBench](https://github.com/Human-Weapon/AgentBench)
 - ❌ **Continuous improvement** → [ProjectKaizen](https://github.com/Human-Weapon/ProjectKaizen)
 - ❌ **Guaranteed "best" prompt** — linting is heuristic, not exhaustive
+- ❌ **Deleting ChatGPT/Claude/Codex history** — that belongs to the host
+- ❌ **Guaranteeing that extraction omitted nothing** — only declared candidates are verified
 
 ---
 
@@ -51,6 +55,11 @@ promptgraph decisions --list
 
 # Show optional ecosystem integration status
 promptgraph status
+
+# Persistent project memory (zero-config)
+promptgraph memory init .
+promptgraph context build . --task "Fix the failing Windows test" --budget 8000
+promptgraph memory validate .
 ```
 
 ## Usage (Python API)
@@ -74,6 +83,11 @@ result = pg.prepare(
 package = result["package"]
 print(package.prompt)
 print("Contradictions:", len(result["contradictions"]))
+
+# Persistent memory across sessions
+pg.record_memory({"type": "failure", "title": "Junction escape", "scope": "shareable"})
+pack = pg.build_context_pack("Fix Windows filesystem containment", budget=2000)
+print(pack.markdown)
 ```
 
 ## Architecture
@@ -94,9 +108,14 @@ src/promptgraph/
 ├── missing_requirement_detection.py
 ├── context_selection.py           # rank + select relevant context
 ├── context_package.py             # assemble final prompt package
+├── path_security.py               # containment / junctions
+├── safe_json_store.py             # atomic locked JSON
+├── memory/                        # persistent project-memory vault
 ├── _sibling_utils.py              # optional ecosystem integration
 └── exceptions.py
 ```
+
+Default memory root: `.agentops/promptgraph/`. Markdown is canonical. `index.json` and `graph.json` are rebuildable. You may open that folder as an Obsidian vault; Obsidian is not required.
 
 ### Pipeline
 
@@ -138,8 +157,11 @@ Because integration is via `importlib.find_spec`, a missing sibling **never** br
 - [x] Requirement extraction, linting, question budgeting, graph + selection, token budgeting
 - [x] Decision ledger and persistent technical memory
 - [x] Context package generation, CLI, tests
+- [x] Persistent project-memory vault, retrieval, checkpoints, compaction readiness
 - [ ] LLM-backed extraction (optional, behind a flag)
 - [ ] Integration adapters for AgentGear/AgentBench/ProjectKaizen
+
+See [docs/project-memory.md](docs/project-memory.md), [docs/context-compaction.md](docs/context-compaction.md), and [docs/memory-schema.md](docs/memory-schema.md). Worked example: [examples/project-memory](examples/project-memory).
 
 ## License
 

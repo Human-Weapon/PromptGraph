@@ -18,10 +18,12 @@ capability:
   reads:
     - .agentops/decisions/**
     - .agentops/context/**
+    - .agentops/promptgraph/**
     - .agentops/metrics/**   # read-only, only for integration
   writes:
     - .agentops/context/**
     - .agentops/decisions/**
+    - .agentops/promptgraph/**
   network: false
   package_install: false
   git_write: false

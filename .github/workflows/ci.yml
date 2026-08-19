@@ -35,13 +35,18 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        run: |
+          ruff check src/ tests/
+          ruff format --check src tests
+
+      - name: Whitespace check
+        run: git diff --check
 
       - name: Run tests
         run: pytest tests/ --tb=short -q
 
-      - name: Build wheel
-        run: python -m build --wheel
+      - name: Build wheel and sdist
+        run: python -m build
 
       - name: Clean install test
         run: |
@@ -55,6 +60,11 @@ jobs:
         run: |
           python -m promptgraph status
           python -m promptgraph prepare -e "Must encrypt user data."
+          WORK=$(mktemp -d)
+          python -m promptgraph memory init "$WORK"
+          python -m promptgraph memory status "$WORK"
+          python -m promptgraph memory validate "$WORK" --json
+          python -m promptgraph context build "$WORK" --task "demo" --budget 400
 
       - name: Standalone test (no siblings)
         run: |

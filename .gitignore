@@ -21,6 +21,7 @@ cov.xml
 
 # Local runtime data (optional; create under .agentops/ instead)
 *.tmp
+**/.vault.lock
 
 # Editors / OS
 .idea/

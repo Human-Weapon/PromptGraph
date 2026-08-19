@@ -1,0 +1,140 @@
+{
+  "corrupt": [],
+  "fingerprint": "a6aa733179e157baf232379c159d72a756e249948242ef56ea6c244d5362cf45",
+  "records": {
+    "CP-0001": {
+      "approach_keys": [],
+      "area": "session",
+      "disposition": "persistent",
+      "evidence_status": "reported",
+      "fingerprint": "3f245f0eca9ba69e1832958c058c19fa1bdb41f497dcd2770ed83f3f8b9a1a3c",
+      "id": "CP-0001",
+      "importance": "persistent",
+      "level": 1,
+      "paths": [],
+      "related": [
+        "REQ-0001",
+        "DEC-0001",
+        "FAIL-0001",
+        "LESSON-0001"
+      ],
+      "relpath": "checkpoints/CP-0001-checkpoint-fix-windows-filesystem-contai.md",
+      "scope": "shareable",
+      "status": "active",
+      "summary": "Fix Windows filesystem containment",
+      "superseded_by": "",
+      "supersedes": [],
+      "tags": [],
+      "title": "Checkpoint: Fix Windows filesystem containment",
+      "type": "checkpoint"
+    },
+    "DEC-0001": {
+      "approach_keys": [],
+      "area": "filesystem",
+      "disposition": "canonical",
+      "evidence_status": "reported",
+      "fingerprint": "38c6bd3c5e3eea0ea907f38484bcdf7d8019b4635523ea4ad86a58d48d6c9e39",
+      "id": "DEC-0001",
+      "importance": "canonical",
+      "level": 2,
+      "paths": [],
+      "related": [
+        "REQ-0001"
+      ],
+      "relpath": "decisions/DEC-0001-resolve-real-destinations-before-contain.md",
+      "scope": "shareable",
+      "status": "active",
+      "summary": "String normalization is not sufficient proof of containment.",
+      "superseded_by": "",
+      "supersedes": [],
+      "tags": [],
+      "title": "Resolve real destinations before containment checks",
+      "type": "decision"
+    },
+    "FAIL-0001": {
+      "approach_keys": [
+        "filesystem:string-normalization-only",
+        "filesystem:mocked-junction-only"
+      ],
+      "area": "filesystem",
+      "disposition": "persistent",
+      "evidence_status": "verified",
+      "fingerprint": "a06e87373cea0fd9ce8035ba5159d72e62b2bf56463b1e36d3e8d16e9f56d6f2",
+      "id": "FAIL-0001",
+      "importance": "persistent",
+      "level": 2,
+      "paths": [
+        "src/promptgraph/path_security.py"
+      ],
+      "related": [
+        "REQ-0001",
+        "DEC-0001"
+      ],
+      "relpath": "failures/FAIL-0001-windows-junction-escaped-containment.md",
+      "scope": "shareable",
+      "status": "active",
+      "summary": "Filesystem containment involving links/reparse points requires real filesystem objects.",
+      "superseded_by": "",
+      "supersedes": [],
+      "tags": [
+        "windows",
+        "junction",
+        "containment"
+      ],
+      "title": "Windows junction escaped containment",
+      "type": "failure"
+    },
+    "LESSON-0001": {
+      "approach_keys": [],
+      "area": "filesystem",
+      "disposition": "canonical",
+      "evidence_status": "reported",
+      "fingerprint": "603eaa22360ac38d64bb8f3d31ae5065bcebbf535f4e8eb4e5063c3ddedcaaf5",
+      "id": "LESSON-0001",
+      "importance": "canonical",
+      "level": 3,
+      "paths": [],
+      "related": [
+        "FAIL-0001"
+      ],
+      "relpath": "lessons/LESSON-0001-os-level-invariants-require-real-os-leve.md",
+      "scope": "shareable",
+      "status": "active",
+      "summary": "Do not treat mocked junction tests as proof.",
+      "superseded_by": "",
+      "supersedes": [],
+      "tags": [
+        "windows",
+        "containment"
+      ],
+      "title": "OS-level invariants require real OS-level regression tests",
+      "type": "lesson"
+    },
+    "REQ-0001": {
+      "approach_keys": [],
+      "area": "filesystem",
+      "disposition": "canonical",
+      "evidence_status": "reported",
+      "fingerprint": "bba1954bca9a02e4b2c7b5ce1adb0c84f18ac8f880a69dc2de571a47ffbbd917",
+      "id": "REQ-0001",
+      "importance": "canonical",
+      "level": 2,
+      "paths": [
+        "src/promptgraph/path_security.py"
+      ],
+      "related": [],
+      "relpath": "requirements/REQ-0001-contain-all-memory-writes.md",
+      "scope": "shareable",
+      "status": "active",
+      "summary": "Every durable write must remain inside the configured project root.",
+      "superseded_by": "",
+      "supersedes": [],
+      "tags": [
+        "containment"
+      ],
+      "title": "Contain all memory writes",
+      "type": "requirement"
+    }
+  },
+  "version": 1
+}
